@@ -3,6 +3,23 @@
 # - C(iio_reader) stdout: [1B type] + <II>(n_samp, n_ch) + float32[]
 # - type: 1=STAGE3_8CH, 2=STAGE5_4CH(Ravg), 3=YT_4CH(final)
 # - Python: 계산 없음. 수신 → JSON 직렬화 → WS 브로드캐스트.
+# ------------------------------------------------------------
+# ✅ pipeline.py 코드 설명
+# • 이 파일은 "데이터 소스"에서 프레임을 읽어 와서, 웹소켓(WS) 클라이언트에게
+# 전달할 준비를 하는 파이프라인 컨트롤러입니다.
+# • 현재 기본 소스는 C로 작성된 iio_reader.exe(제드보드 경로)이고,
+# Synthetic(가짜 데이터 발생기)도 선택 가능해요.
+# • (향후) STM32로 전환 시에는 "SerialSource"를 추가해 같은 구조로 붙이면 됩니다.
+#
+# ✅ 핵심 포인트
+# 1) SourceBase: "프레임 한 덩어리"를 읽어오는 공통 인터페이스
+# 2) CProcSource: C 프로세스를 실행하고 stdout 바이너리를 파싱
+# 3) SyntheticSource: 테스트/데모용 가짜 데이터 생성
+# 4) Pipeline: Source에서 읽은 프레임을 가공 없이 큐에 넣고, app.py가 WS로 전송
+#
+# 📦 프레임 구조(바이너리)
+# [1바이트: 타입] + [uint32 n_samp] + [uint32 n_ch] + [float32[n_samp*n_ch]]
+# → 이걸 NumPy float32 (n_samp, n_ch) 2D 배열로 바꿔서 내부 처리합니다.
 # ============================================================
 
 from __future__ import annotations
@@ -24,6 +41,12 @@ import sys
 # -----------------------------
 # [0] NaN/Inf 정규화 + strict JSON
 # -----------------------------
+# 목적: 그래프 라이브러리(Chart.js 등)는 NaN/Inf를 싫어합니다.
+# JSON 직렬화 전에 NaN/Inf를 None(null)으로 바꾸고,
+# numpy 타입을 파이썬 기본 타입으로 변환하여 안전하게 보냅니다.
+#
+# 사용처: 아래 _run()에서 payload 직렬화 전에 호출됨.
+
 def _json_safe(v):
     """NaN/Inf를 None으로 바꾸고, numpy 타입/배열은 파이썬 내장형으로 변환."""
     if isinstance(v, dict):
@@ -47,6 +70,13 @@ def _json_safe(v):
 # -----------------------------
 # [1] 공통 소스 베이스
 # -----------------------------
+# "데이터 소스"가 반드시 구현해야 하는 최소 인터페이스입니다.
+#
+# • read_frame(): 한 번 호출할 때마다 (ftype, arr) 한 프레임을 반환
+# - ftype: 정수(프레임 타입)
+# - arr: 2D NumPy float32 배열 (shape = [n_samp, n_ch])
+# • terminate(): 소스 정리(프로세스 종료, 포트 닫기 등)
+
 class SourceBase:
     def read_frame(self) -> Tuple[int, np.ndarray]:
         """한 번 호출에 '하나의 프레임' 반환: (ftype, arr [n_samp, n_ch], float32)."""
@@ -59,6 +89,10 @@ class SourceBase:
 # -----------------------------
 # [2] CProcSource — C 프로그램 실행 및 데이터 파싱
 # -----------------------------
+# 역할: C(iio_reader.exe)를 서브프로세스로 띄우고, 표준출력(stdout)으로
+# 흘러나오는 바이너리 스트림을 "프레임 단위"로 읽어 파싱합니다.
+# 주의: 여기서는 계산을 하지 않습니다(표시 전용 파이프라인). 계산은 C에서 끝남
+
 class CProcSource(SourceBase):
     """
     iio_reader.c 프로세스를 실행하고, 표준 출력(stdout)으로 나오는
@@ -72,45 +106,49 @@ class CProcSource(SourceBase):
 
     def __init__(self, params: PipelineParams):
         # ❗ [최종 수정] C 프로그램에 전달할 6개 핵심 파라미터를 리스트로 구성
+        # 순서/의미는 C측 main(argc, argv)에서 소비하는 규약과 일치해야 합니다.
         args = [
-            params.exe_path,
-            params.ip,
-            str(params.block_samples),
-            str(int(params.sampling_frequency)),
-            str(params.target_rate_hz),
-            str(params.lpf_cutoff_hz),
-            str(params.movavg_r),
-            str(params.movavg_ch), # ❗ CH MA 인자 추가
-        ]
+            params.exe_path, # 실행 파일 경로 (iio_reader.exe)
+            params.ip, # 보드/장치 IP
+            str(params.block_samples), # 블록 샘플 수
+            str(int(params.sampling_frequency)), # 하드웨어 샘플레이트(Hz)
+            str(params.target_rate_hz), # 타깃 출력 레이트(Hz)
+            str(params.lpf_cutoff_hz), # LPF 컷오프(Hz)
+            str(params.movavg_r), # R moving avg 길이
+            str(params.movavg_ch), # ❗ CH moving avg 길이(추가)
+            ]
+
 
         # C 리더(iio_reader.exe)를 실행
         self.proc = subprocess.Popen(
             args,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
+            stdin=subprocess.PIPE,  # 파이썬 → C 명령 전송용 (계수 업데이트 등)
+            stdout=subprocess.PIPE, # C → 파이썬 데이터 스트림 수신용
             stderr=subprocess.PIPE,
-            bufsize=0,
+            bufsize=0,              # 실시간 파이프 처리
         )
+
 
         # 표준 출력이 정상적으로 연결되었는지 확인합니다.
         if not self.proc.stdout:
             raise RuntimeError("CProcSource: C process stdout is not available.")
-        if not self.proc.stdin: # ❗ [추가] stdin 연결 확인
+        if not self.proc.stdin: # ❗ stdin 연결 확인 (계수 전송 필요)
             raise RuntimeError("CProcSource: C process stdin is not available.")
         self._stdout = self.proc.stdout
-        self._stdin = self.proc.stdin # ❗ [추가] stdin 객체 저장
-        self._hdr_struct = struct.Struct("<BII")
+        self._stdin = self.proc.stdin # ❗ 계수 업데이트용으로 보관
+        self._hdr_struct = struct.Struct("<BII") # little-endian: uint8 + uint32 + uint32
 
 
     def _read_exact(self, n: int) -> bytes:
         """
-        C 프로세스의 표준 출력에서 정확히 n 바이트를 읽어올 때까지 기다립니다.
+        표준 출력에서 정확히 n 바이트를 읽어올 때까지 블로킹.
+        스트림이 끊기거나 EOF가 오면 예외 발생.
         """
         buf = bytearray()
         while len(buf) < n:
             chunk = self._stdout.read(n - len(buf))
             if not chunk:
-                # C 프로세스가 예기치 않게 종료되면 에러를 발생시킵니다.
+                # C 프로세스가 비정상 종료된 경우, stderr를 읽어 에러 메시지 힌트 제공
                 stderr_output = self.proc.stderr.read().decode(errors='ignore')
                 raise EOFError(f"CProcSource: unexpected EOF. Stderr: {stderr_output}")
             buf.extend(chunk)
@@ -119,16 +157,16 @@ class CProcSource(SourceBase):
     def read_frame(self) -> Tuple[int, np.ndarray]:
         """
         하나의 데이터 프레임(헤더 + 페이로드)을 읽고 파싱하여 반환합니다.
-        이 함수가 Pipeline의 메인 루프에서 계속 호출됩니다.
+        파이프라인 메인 루프에서 계속 호출됩니다.
         """
-        # 1. 헤더(9바이트)를 먼저 읽습니다.
+        # 1) 헤더(9바이트) 읽기 → (ftype, n_samp, n_ch)
         hdr_bytes = self._read_exact(self._hdr_struct.size)
         ftype, n_samp, n_ch = self._hdr_struct.unpack(hdr_bytes)
 
-        # 2. 헤더에서 얻은 샘플/채널 수만큼 데이터 페이로드(float32 배열)를 읽습니다.
+        # 2) 페이로드(float32[n_samp*n_ch]) 읽기.
         payload_bytes = self._read_exact(n_samp * n_ch * 4)
         
-        # 3. 읽어온 바이트 데이터를 NumPy 배열로 변환합니다.
+        # 3) 바이트를 NumPy 2D 배열로 변환 (shape = [n_samp, n_ch])
         arr = np.frombuffer(payload_bytes, dtype=np.float32).reshape(n_samp, n_ch)
         
         return int(ftype), arr
@@ -138,7 +176,7 @@ class CProcSource(SourceBase):
         """C 프로세스의 stdin으로 한 줄의 명령어를 보냅니다."""
         if self._stdin and not self._stdin.closed:
             try:
-                # C에서 fgets로 읽을 수 있도록 개행 문자를 추가하고 UTF-8로 인코딩
+                # C에서 fgets로 읽을 수 있도록 개행 추가 + UTF-8 인코딩
                 self._stdin.write(f"{line}\n".encode('utf-8'))
                 self._stdin.flush()
             except (IOError, ValueError) as e:
@@ -159,6 +197,9 @@ class CProcSource(SourceBase):
 # -----------------------------
 # [3] (옵션) SyntheticSource — 데모용
 # -----------------------------
+# 역할: 하드웨어 없이도 UI/WS 라인이 잘 작동하는지 빠르게 확인할 수 있게,
+# 간단한 sin/cos 파형으로 3종 프레임을 번갈아 생성합니다.
+
 class SyntheticSource(SourceBase):
     FT_STAGE3 = 0x01
     FT_STAGE5 = 0x02
@@ -166,14 +207,14 @@ class SyntheticSource(SourceBase):
 
     def __init__(self, rate_hz: float = 10.0):
         self.rate = float(rate_hz)
-        self._k = 0
+        self._k = 0  # 1→2→3→1… 순환 인덱스
 
     def read_frame(self) -> Tuple[int, np.ndarray]:
-        # 순서: 1 -> 2 -> 3 반복
+        # 순서: 1 → 2 → 3 반복 (STAGE3 → STAGE5 → YT)
         self._k = (self._k % 3) + 1
         t = np.arange(5) / self.rate
         if self._k == 1:
-            # 8ch stage3
+            # 8ch stage3 (샘플 5개 × 채널 8)
             data = [np.sin(2*np.pi*(0.2 + 0.02*c)*t).astype(np.float32) for c in range(8)]
             arr = np.stack(data, axis=1)
             return self.FT_STAGE3, arr
@@ -192,26 +233,30 @@ class SyntheticSource(SourceBase):
 # -----------------------------
 # [4] 파라미터 데이터 클래스 (최종 버전)
 # -----------------------------
+# 역할: 파이프라인 동작에 필요한 설정값(실행/표시/계수)을 한 곳에 보관합니다.
+# app.py에서 생성/수정하여 Pipeline으로 전달합니다.
+
 @dataclass
 class PipelineParams:
-    # 실행 파라미터
-    mode: str = "cproc"
-    exe_path: str = "iio_reader.exe"
-    ip: str = "192.168.1.133"
-    block_samples: int = 16384
-    sampling_frequency: int = 100000
+# 실행 파라미터 -----------------------------------------
+    mode: str = "cproc" # "cproc" | "synthetic" (※ STM32 전환 시 "serial" 추가 예정)
+    exe_path: str = "iio_reader.exe" # C 실행 파일 경로
+    ip: str = "192.168.1.133" # 장치 IP (제드보드 경로)
+    block_samples: int = 16384 # 블록 크기
+    sampling_frequency: int = 100000 # 하드웨어 샘플레이트(Hz)
 
-    # DSP 파라미터 (Configuration 탭 연동)
-    target_rate_hz: float = 10.0
-    lpf_cutoff_hz: float = 2500.0
-    movavg_ch: int = 1 # ❗ [추가] CH MA(Smoothing) 필드. 기본값 1은 사실상 기능 OFF.
-    movavg_r: int = 5
+
+    # DSP 파라미터 (Configuration 탭 연동) ------------------
+    target_rate_hz: float = 10.0 # 타깃 출력 레이트(Hz)
+    lpf_cutoff_hz: float = 2500.0 # LPF 컷오프(Hz)
+    movavg_ch: int = 1 # ❗ CH MA(Smoothing) 길이. 1이면 사실상 OFF.
+    movavg_r: int = 5 # R moving avg 길이
     
-    # UI/메타 데이터
-    label_names: List[str] = field(default_factory=lambda: ["yt0", "yt1", "yt2", "yt3"])
+    # UI/메타 데이터 ----------------------------------------
+    label_names: List[str] = field(default_factory=lambda: ["yt0", "yt1", "yt2", "yt3"]) # 4ch 라벨
     log_csv_path: Optional[str] = None
     
-    # 4ch 탭 연동용 계수들 (C 코드의 기본값과 일치시킴)
+    # 4ch 탭 연동용 계수들 (C 코드의 기본값과 일치) ---------
     alpha: float = 1.0
     k: float = 10.0
     b: float = 0.0
@@ -221,9 +266,14 @@ class PipelineParams:
     E: float = 1.0
     F: float = 0.0
 
+
 # -----------------------------
 # [5] 파이프라인 클래스 (최종 수정 버전)
 # -----------------------------
+# 역할: 선택된 Source에서 프레임을 계속 읽어, 필요한 최소 가공 후
+# app.py(WebSocket 루프)가 읽을 큐에 텍스트(JSON)로 넣습니다.
+# (이 파일은 "표시 전용"이므로 복잡한 계산을 하지 않습니다.)
+
 class Pipeline:
     """
     데이터 소스(C 또는 Synthetic)를 관리하고, 읽어온 데이터를 처리하여
@@ -235,23 +285,26 @@ class Pipeline:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         
-        # ❗ [추가] 데이터 처리 시작 시간을 기록할 변수
+        # ❗ 데이터 수신을 시작한 시각(성능 측정용)
         self.start_time: Optional[float] = None
 
-        # params.mode에 따라 데이터 소스(C 또는 Synthetic)를 결정
+        # params.mode에 따라 데이터 소스 선택
         if self.params.mode == "cproc":
             self.src: SourceBase = CProcSource(self.params)
         elif self.params.mode == "synthetic":
-            # SyntheticSource는 CProcSource와 달리 간단한 인자만 필요
+            # SyntheticSource는 C와 달리 rate_hz만 필요
             self.src = SyntheticSource(rate_hz=self.params.target_rate_hz)
         else:
+            # (향후) STM32용 SerialSource 추가 시 여기 분기 확장
             raise ValueError(f"Unknown mode: {self.params.mode}")
 
-        # WebSocket 컨슈머(클라이언트) 목록 관리
+
+        # WebSocket 컨슈머(클라이언트) 목록 + 락
         self._consumers: List[asyncio.Queue[str]] = []
         self._consumers_lock = threading.Lock()
 
-        # 데이터 캐싱 및 성능 측정을 위한 변수 초기화
+
+        # 최근 프레임/통계 캐시(WS payload 구성용)
         self._last_yt_time = None
         self._last_stats = None
         self._last_ravg = None
@@ -262,25 +315,30 @@ class Pipeline:
         self._pending_ts = None
         
     
-    # ❗ [추가] 계수 업데이트를 위한 메소드
+    # ❗ 계수 업데이트용 메서드 (재시작 없이 C에 반영)
     def update_coeffs(self, key: str, values: List[float]):
         """
         C-DSP 프로세스에 실시간으로 계수 업데이트 명령을 보냅니다.
         C 프로세스를 재시작하지 않습니다.
+        
+        사용 예)
+        key="y1_den", values=[..., ..., ...]
+        → C stdin으로 "y1_den v1,v2,v3,..." 형태로 전송
         """
-        # 1. 파이썬 파라미터 객체에도 값을 동기화
+        
+        # 1) 파이썬 파라미터에도 동기화 (UI 반영/상태 보존)
         if hasattr(self.params, key):
             setattr(self.params, key, values)
         elif key == 'yt_coeffs' and len(values) == 2:
             self.params.E = values[0]
             self.params.F = values[1]
 
-        # 2. C 프로세스로 전송할 커맨드 문자열 생성
+        # 2) C 프로세스로 전송할 문자열 생성
         # 예: "y1_den 0.0,0.0,1.0,0.0,0.0,0.0"
         values_str = ",".join(map(str, values))
         command = f"{key} {values_str}"
 
-        # 3. CProcSource인 경우에만 커맨드 전송
+        # 3) 현재 소스가 CProcSource일 때만 실제 전송
         if isinstance(self.src, CProcSource):
             self.src.send_command(command)
             print(f"[Pipeline] Sent command to C: {command}")    
@@ -288,22 +346,25 @@ class Pipeline:
 
 
     def register_consumer(self) -> asyncio.Queue:
+        """WS 루프(app.py)가 읽어갈 비동기 큐를 등록합니다."""
         q: asyncio.Queue[str] = asyncio.Queue(maxsize=2)
         with self._consumers_lock:
             self._consumers.append(q)
         return q
 
     def _broadcast(self, payload: dict):
-        # 모든 컨슈머에게 JSON 메시지를 보내는 역할은 app.py가 담당
-        # 여기서는 broadcast_fn을 호출하기만 함 (현재는 사용되지 않음, app.py에서 직접 처리)
+        # 모든 컨슈머에게 JSON 메시지를 보내는 역할은 app.py가 담당합니다.
+        # (과거 버전에서 사용되던 훅. 현재는 사용되지 않음)
         pass 
 
     def start(self):
+        """백그라운드 스레드로 파이프라인 루프를 시작."""
         if self._thread and self._thread.is_alive(): return
         self._thread = threading.Thread(target=self._run, name="PipelineThread", daemon=True)
         self._thread.start()
 
     def stop(self):
+        """파이프라인 정지 및 소스 종료."""
         self._stop.set()
         try: self.src.terminate()
         except Exception: pass
@@ -311,31 +372,39 @@ class Pipeline:
             self._thread.join(timeout=3.0)
 
     def _run(self):
-        # (이전 답변에서 드린 최종 _run 메소드와 동일합니다)
+        """메인 루프: 소스에서 프레임을 읽고, WS 큐로 전달할 payload를 구성."""
         while not self._stop.is_set():
             try:
                 ftype, block = self.src.read_frame()
                 
-                # ❗ [추가] 첫 데이터 프레임 수신 시, 현재 시간을 start_time으로 기록
+                # ❗ 첫 프레임 도착 시점 기록(성능 측정 등)
                 if self.start_time is None and block.size > 0:
                     self.start_time = time.time()
                 
-            except EOFError: break
+            except EOFError: break   # 소스 종료(정상/비정상) 시 루프 탈출
             except Exception as e:
                 print(f"[pipeline] read_frame error: {e}")
                 break
 
-            if block.size == 0: continue
+            if block.size == 0: continue  # 아직 프레임이 누적 중이거나 빈 프레임이면 스킵
             now = time.time()
             n_samp, n_ch = block.shape
+            
 
+                
+            # 타입별 마지막 캐시 갱신 --------------------------------------
             if ftype == CProcSource.FT_STAGE3:
+                # Stage3(8ch) 블록은 yt가 올 때 함께 묶어서 보냄
                 self._pending_stage3_block, self._pending_ts = block, now
+                
+                
             elif ftype == CProcSource.FT_STAGE5:
+                # Ravg(4ch) 갱신: 그래프 그릴 때 사용할 시리즈 형태로 저장
                 series = [block[:, k].tolist() for k in range(min(4, n_ch))]
                 self._last_ravg = {"names": [f"Ravg{k}" for k in range(len(series))], "series": series}
             
-            # ❗ [추가] 신규 프레임 타입 처리
+            
+            # (선택) 추가 프레임 타입: y2, y3 보정 단계
             elif ftype == CProcSource.FT_STAGE7_Y2:
                 series = [block[:, k].tolist() for k in range(min(4, n_ch))]
                 self._last_y2 = {"names": [f"y2_{k}" for k in range(len(series))], "series": series}
@@ -345,9 +414,12 @@ class Pipeline:
                 
                 
             elif ftype == CProcSource.FT_YT:
+                # 최종 4ch yt
                 series = [block[:, k].tolist() for k in range(min(4, n_ch))]
                 self._last_yt = {"names": self.params.label_names[:len(series)], "series": series}
                 
+                
+                # 처리 통계 계산(블록당 처리 시간 기반)
                 stats = None
                 if self._last_yt_time is not None:
                     dt = max(1e-9, now - self._last_yt_time)
@@ -363,27 +435,30 @@ class Pipeline:
                 self._last_yt_time = now
                 self._last_stats = stats
 
+
+                # Stage3 블록을 yt와 묶어서 하나의 payload로 푸시 -----------------
                 if self._pending_stage3_block is not None:
                     payload = {
                         "type": "frame", "ts": self._pending_ts,
-                        "y_block": self._pending_stage3_block.tolist(),
+                        "y_block": self._pending_stage3_block.tolist(),   # Stage3 원신호 블록
                         "n_ch": int(self._pending_stage3_block.shape[1]),
                         "block": {"n": int(self._pending_stage3_block.shape[0])},
                         "params": {"target_rate_hz": self.params.target_rate_hz},
                         "ravg_signals": self._last_ravg,
                         "stage7_y2": self._last_y2,
                         "stage8_y3": self._last_y3,
-                        "derived": self._last_yt,
-                        "stats": self._last_stats,
+                        "derived": self._last_yt,   # 최종 yt
+                        "stats": self._last_stats,  # 처리량/속도 지표
                     }
                     
-                    # ❗ app.py의 WebSocket 루프가 사용할 수 있도록 큐에 직접 삽입
+                    # app.py의 WebSocket 루프가 사용할 수 있도록 텍스트(JSON)로 큐에 삽입
                     text = json.dumps(_json_safe(payload), separators=(",", ":"), allow_nan=False)
                     with self._consumers_lock:
                         for q in list(self._consumers):
                             try:
-                                if q.full(): _ = q.get_nowait()
+                                if q.full(): _ = q.get_nowait() # 최신만 유지
                                 q.put_nowait(text)
                             except Exception: pass
-                    
+                            
+                    # 다음 묶음을 위해 Stage3 보류 블록 비우기
                     self._pending_stage3_block, self._pending_ts = None, None
