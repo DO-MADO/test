@@ -8,3 +8,4 @@ fastapi
 plotly
 pydantic
 uvicorn
+pyserial

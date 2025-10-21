@@ -204,30 +204,64 @@ class SyntheticSource(SourceBase):
     FT_STAGE3 = 0x01
     FT_STAGE5 = 0x02
     FT_YT     = 0x03
+    FT_STAGE7_Y2 = 0x04
+    FT_STAGE8_Y3 = 0x05
 
     def __init__(self, rate_hz: float = 10.0):
         self.rate = float(rate_hz)
         self._k = 0  # 1→2→3→1… 순환 인덱스
+        
+        _SLOW_DOWN_FACTOR = 5.0
+        
+        # SyntheticSource 모드 기다림 추가 (없으면 너무 많은 양을 보냄)
+        try:
+            self._sleep_duration = ((1.0 / self.rate) / 3.0) * _SLOW_DOWN_FACTOR
+        except ZeroDivisionError:
+            self._sleep_duration = 0.01
+
 
     def read_frame(self) -> Tuple[int, np.ndarray]:
-        # 순서: 1 → 2 → 3 반복 (STAGE3 → STAGE5 → YT)
-        self._k = (self._k % 3) + 1
+         # SyntheticSource 모드 기다림 추가 (없으면 너무 많은 양을 보냄)
+        time.sleep(self._sleep_duration)
+        
+        # 순서: STAGE3 (k=1) → STAGE5 (k=2) → Y2 (k=3) → Y3 (k=4) → YT (k=5) 입니다.
+        self._k = (self._k % 5) + 1
         t = np.arange(5) / self.rate
         if self._k == 1:
-            # 8ch stage3 (샘플 5개 × 채널 8)
+            # 1. 첫 번째 순서(k=1)라면, STAGE3 (타입 1) 데이터를 만듭니다.
+            # 8채널(c in range(8))짜리 sin 파형을 만듭니다.
             data = [np.sin(2*np.pi*(0.2 + 0.02*c)*t).astype(np.float32) for c in range(8)]
             arr = np.stack(data, axis=1)
             return self.FT_STAGE3, arr
         elif self._k == 2:
-            # 4ch ravg
+            # 2. 두 번째 순서(k=2)라면, STAGE5 (타입 2) 데이터를 만듭니다.
+            # 4채널(c in range(4))짜리 cos 파형을 만듭니다.
             data = [np.cos(2*np.pi*(0.1 + 0.01*c)*t).astype(np.float32) for c in range(4)]
             arr = np.stack(data, axis=1)
             return self.FT_STAGE5, arr
-        else:
-            # 4ch yt
+        elif self._k == 3: 
+            # 3. 세 번째 순서(k=3)라면, Y2 (타입 4) 데이터를 만듭니다.
+            # (타입 번호(FT_STAGE7_Y2 = 0x04)와 순서(k=3)는 달라도 됩니다. 순서가 중요합니다.)
+            data = [np.sin(2*np.pi*(0.15 + 0.01*c)*t + 0.2).astype(np.float32) for c in range(4)]
+            arr = np.stack(data, axis=1)
+            return self.FT_STAGE7_Y2, arr
+        elif self._k == 4:
+            # 4. 네 번째 순서(k=4)라면, Y3 (타입 5) 데이터를 만듭니다.
+            data = [np.cos(2*np.pi*(0.15 + 0.01*c)*t + 0.4).astype(np.float32) for c in range(4)]
+            arr = np.stack(data, axis=1)
+            return self.FT_STAGE8_Y3, arr
+        elif self._k == 5:
+            # 5. 다섯 번째(k=5), 즉 '마지막' 순서라면, YT (타입 3) 데이터를 만듭니다.
+            # C 코드와 마찬가지로 'YT' 프레임이 마지막에 와야 합니다.
+            # 왜? pipeline.py의 _run() 루프는 YT가 들어와야 
+            # "아, 5종 세트가 다 모였구나"라고 판단하고 웹소켓으로 전송하기 때문입니다.
             data = [np.sin(2*np.pi*(0.05 + 0.01*c)*t + 0.5).astype(np.float32) for c in range(4)]
             arr = np.stack(data, axis=1)
             return self.FT_YT, arr
+        
+        # [수정] self._k는 1~5만 가능하므로, 5에서 끝났기 때문에 else 블록은 필요 없습니다.
+        # 만약의 버그(k=1~5가 아닌 경우)를 대비해 안전장치로 빈 값을 반환하게 할 수는 있습니다.
+        return self.FT_YT, np.empty((0, 4), dtype=np.float32)
 
 
 # -----------------------------
