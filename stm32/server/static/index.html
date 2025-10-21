@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>신호 처리 보드</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <img src="./img/logo.png" alt="로고" class="brand-logo" />
+      </div>
+      <div class="header-controls">
+        <div id="statsDisplay" class="stats-display"></div>
+      </div>
+    </header>
+
+    <main class="grid">
+      <div class="tabs">
+        <button class="tab-btn" data-target="fig3-section">
+          Configuration
+        </button>
+        <button class="tab-btn active" data-target="fig1-section">
+          Raw Data
+        </button>
+        <button class="tab-btn" data-target="fig2-section">4ch</button>
+        <button id="globalResetBtn" class="resetbtn">Reset</button>
+        <button id="saveDataBtn" class="savetbtn">Save</button>
+      </div>
+
+      <section id="fig1-section" class="card tab-content active">
+        <div class="view-mode-bar">
+          <button class="view-mode-btn active" id="rawViewBothBtn">All</button>
+          <button class="view-mode-btn" id="rawViewS3Btn">Stage3</button>
+          <button class="view-mode-btn" id="rawViewS5Btn">Stage5</button>
+        </div>
+        <div id="stage3Block">
+          <h2>· Raw Data (~Stage3)</h2>
+          <div class="toolbar">
+            <div id="fig1Bar" class="legend-bar"></div>
+
+            <button id="dataReset1" class="btn">그래프 리셋</button>
+            <button id="resetZoom1" class="btn">Zoom 리셋</button>
+
+            <div style="flex-grow: 1"></div>
+
+            <div class="yaxis-controls">
+              <label for="yMin1">Y축 Min:</label>
+              <input
+                type="number"
+                id="yMin1"
+                class="yaxis-input"
+                placeholder="Min"
+              />
+              <label for="yMax1">Max:</label>
+              <input
+                type="number"
+                id="yMax1"
+                class="yaxis-input"
+                placeholder="Max"
+              />
+              <button id="yApply1" class="btn">범위 적용</button>
+              <button id="yAuto1" class="btn">자동</button>
+            </div>
+          </div>
+
+          <div class="chart-container" id="stage3Container">
+            <canvas id="fig1"></canvas>
+          </div>
+        </div>
+        <div id="stage5Block">
+          <h2>· Raw Data (~Stage5)</h2>
+
+          <div class="toolbar">
+            <div id="fig3Bar" class="legend-bar"></div>
+
+            <button id="dataReset3" class="btn">그래프 리셋</button>
+            <button id="resetZoom3" class="btn">Zoom 리셋</button>
+            <div class="r-movavg-param">
+              <label for="ma_r_sec_raw">R Moving Avg (sec)</label>
+              <input
+                type="range"
+                id="ma_r_sec_raw"
+                min="0.1"
+                max="3.0"
+                step="0.1"
+                value="0.5"
+              />
+              <input
+                type="number"
+                id="ma_r_sec_num_raw"
+                min="0.1"
+                max="3.0"
+                step="0.1"
+                value="0.5"
+              />
+            </div>
+
+            <div class="toolbar" style="border-top: none; padding-top: 0">
+              <button id="apply_raw_r" class="btn5step">이동평균 적용</button>
+              <button id="resetParams_raw_r" class="btn5step">
+                이동평균 리셋
+              </button>
+            </div>
+
+            <div style="flex-grow: 1"></div>
+
+            <div class="yaxis-controls">
+              <label for="yMin3">Y축 Min:</label>
+              <input
+                type="number"
+                id="yMin3"
+                class="yaxis-input"
+                placeholder="Min"
+              />
+              <label for="yMax3">Max:</label>
+              <input
+                type="number"
+                id="yMax3"
+                class="yaxis-input"
+                placeholder="Max"
+              />
+              <button id="yApply3" class="btn">범위 적용</button>
+              <button id="yAuto3" class="btn">자동</button>
+            </div>
+          </div>
+
+          <div class="chart-container" id="stage5Container">
+            <canvas id="fig3"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <section id="fig2-section" class="card tab-content">
+        <div class="horizontal-controls">
+          <div style="width: 36px"></div>
+          <div class="control-group">
+            <label>y1 분모 계수 [a5,a4,a3,a2,a1,a0]</label>
+            <div class="coeffs">
+              <input id="y1c" type="text" value="0,1,0" />
+              <button class="btn" id="saveY1">적용</button>
+            </div>
+          </div>
+          <div class="control-group">
+            <label>y2 계수 [b5,b4,b3,b2,b1,b0]</label>
+            <div class="coeffs">
+              <input id="y2c" type="text" value="0,0,0,-0.01,0.9,0" />
+              <button class="btn" id="saveY2">적용</button>
+            </div>
+          </div>
+          <div class="control-group">
+            <label>y3 계수 [c5,c4,c3,c2,c1,c0]</label>
+            <div class="coeffs">
+              <input id="y3c" type="text" value="0,1,0,0,0,0" />
+              <button class="btn" id="saveY3">적용</button>
+            </div>
+          </div>
+          <div class="control-group">
+            <label>yt 계수 [E,F]</label>
+            <div class="coeffs">
+              <input id="ytc" type="text" value="1,0" />
+              <button class="btn" id="saveYt">적용</button>
+            </div>
+          </div>
+          <div class="control-group" style="flex-grow: 1; min-width: 300px">
+            <div id="ytValuesDisplay" class="stats-display"></div>
+          </div>
+        </div>
+
+        <div class="view-mode-bar" id="ytViewModeBar">
+          <button class="view-mode-btn active" data-yt-target="all">All</button>
+          <button class="view-mode-btn" data-yt-target="yt0">yt0</button>
+          <button class="view-mode-btn" data-yt-target="yt1">yt1</button>
+          <button class="view-mode-btn" data-yt-target="yt2">yt2</button>
+          <button class="view-mode-btn" data-yt-target="yt3">yt3</button>
+        </div>
+
+        <div id="fig2GridContainer">
+          <div class="yt-chart-wrapper" id="yt0Wrapper">
+            <div class="sub-chart-block" data-stage="y2">
+              <div class="toolbar">
+                <span class="yt-chart-title">· yt0-y2 (~stage7)</span>
+                <div style="flex-grow: 1"></div>
+                <button id="dataReset2_yt0_y2" class="btn">그래프 리셋</button
+                ><button id="resetZoom2_yt0_y2" class="btn">Zoom 리셋</button>
+              </div>
+              <div class="chart-container">
+                <canvas id="fig2_yt0_y2"></canvas>
+              </div>
+            </div>
+            <div class="sub-chart-block" data-stage="y3">
+              <div class="toolbar">
+                <span class="yt-chart-title">· yt0-y3 (~stage8)</span>
+                <div style="flex-grow: 1"></div>
+                <button id="dataReset2_yt0_y3" class="btn">그래프 리셋</button
+                ><button id="resetZoom2_yt0_y3" class="btn">Zoom 리셋</button>
+              </div>
+              <div class="chart-container">
+                <canvas id="fig2_yt0_y3"></canvas>
+              </div>
+            </div>
+            <div class="sub-chart-block" data-stage="yt">
+              <div class="toolbar">
+                <span class="yt-chart-title">· yt0-yt (~stage9)</span>
+                <div style="flex-grow: 1"></div>
+                <button id="dataReset2_yt0_yt" class="btn">그래프 리셋</button
+                ><button id="resetZoom2_yt0_yt" class="btn">Zoom 리셋</button>
+              </div>
+              <div class="chart-container">
+                <canvas id="fig2_yt0_yt"></canvas>
+              </div>
+            </div>
+          </div>
+
+          <div class="yt-chart-wrapper" id="yt1Wrapper">
+            <div class="sub-chart-block" data-stage="y2">
+              <div class="toolbar">
+                <span class="yt-chart-title">· yt1-y2 (~stage7)</span>
+                <div style="flex-grow: 1"></div>
+                <button id="dataReset2_yt1_y2" class="btn">그래프 리셋</button
+                ><button id="resetZoom2_yt1_y2" class="btn">Zoom 리셋</button>
+              </div>
+              <div class="chart-container">
+                <canvas id="fig2_yt1_y2"></canvas>
+              </div>
+            </div>
+            <div class="sub-chart-block" data-stage="y3">
+              <div class="toolbar">
+                <span class="yt-chart-title">· yt1-y3 (~stage8)</span>
+                <div style="flex-grow: 1"></div>
+                <button id="dataReset2_yt1_y3" class="btn">그래프 리셋</button
+                ><button id="resetZoom2_yt1_y3" class="btn">Zoom 리셋</button>
+              </div>
+              <div class="chart-container">
+                <canvas id="fig2_yt1_y3"></canvas>
+              </div>
+            </div>
+            <div class="sub-chart-block" data-stage="yt">
+              <div class="toolbar">
+                <span class="yt-chart-title">· yt1-yt (~stage9)</span>
+                <div style="flex-grow: 1"></div>
+                <button id="dataReset2_yt1_yt" class="btn">그래프 리셋</button
+                ><button id="resetZoom2_yt1_yt" class="btn">Zoom 리셋</button>
+              </div>
+              <div class="chart-container">
+                <canvas id="fig2_yt1_yt"></canvas>
+              </div>
+            </div>
+          </div>
+
+          <div class="yt-chart-wrapper" id="yt2Wrapper">
+            <div class="sub-chart-block" data-stage="y2">
+              <div class="toolbar">
+                <span class="yt-chart-title">· yt2-y2 (~stage7)</span>
+                <div style="flex-grow: 1"></div>
+                <button id="dataReset2_yt2_y2" class="btn">그래프 리셋</button
+                ><button id="resetZoom2_yt2_y2" class="btn">Zoom 리셋</button>
+              </div>
+              <div class="chart-container">
+                <canvas id="fig2_yt2_y2"></canvas>
+              </div>
+            </div>
+            <div class="sub-chart-block" data-stage="y3">
+              <div class="toolbar">
+                <span class="yt-chart-title">· yt2-y3 (~stage8)</span>
+                <div style="flex-grow: 1"></div>
+                <button id="dataReset2_yt2_y3" class="btn">그래프 리셋</button
+                ><button id="resetZoom2_yt2_y3" class="btn">Zoom 리셋</button>
+              </div>
+              <div class="chart-container">
+                <canvas id="fig2_yt2_y3"></canvas>
+              </div>
+            </div>
+            <div class="sub-chart-block" data-stage="yt">
+              <div class="toolbar">
+                <span class="yt-chart-title">· yt2-yt (~stage9)</span>
+                <div style="flex-grow: 1"></div>
+                <button id="dataReset2_yt2_yt" class="btn">그래프 리셋</button
+                ><button id="resetZoom2_yt2_yt" class="btn">Zoom 리셋</button>
+              </div>
+              <div class="chart-container">
+                <canvas id="fig2_yt2_yt"></canvas>
+              </div>
+            </div>
+          </div>
+
+          <div class="yt-chart-wrapper" id="yt3Wrapper">
+            <div class="sub-chart-block" data-stage="y2">
+              <div class="toolbar">
+                <span class="yt-chart-title">· yt3-y2 (~stage7)</span>
+                <div style="flex-grow: 1"></div>
+                <button id="dataReset2_yt3_y2" class="btn">그래프 리셋</button
+                ><button id="resetZoom2_yt3_y2" class="btn">Zoom 리셋</button>
+              </div>
+              <div class="chart-container">
+                <canvas id="fig2_yt3_y2"></canvas>
+              </div>
+            </div>
+            <div class="sub-chart-block" data-stage="y3">
+              <div class="toolbar">
+                <span class="yt-chart-title">· yt3-y3 (~stage8)</span>
+                <div style="flex-grow: 1"></div>
+                <button id="dataReset2_yt3_y3" class="btn">그래프 리셋</button
+                ><button id="resetZoom2_yt3_y3" class="btn">Zoom 리셋</button>
+              </div>
+              <div class="chart-container">
+                <canvas id="fig2_yt3_y3"></canvas>
+              </div>
+            </div>
+            <div class="sub-chart-block" data-stage="yt">
+              <div class="toolbar">
+                <span class="yt-chart-title">· yt3-yt (~stage9)</span>
+                <div style="flex-grow: 1"></div>
+                <button id="dataReset2_yt3_yt" class="btn">그래프 리셋</button
+                ><button id="resetZoom2_yt3_yt" class="btn">Zoom 리셋</button>
+              </div>
+              <div class="chart-container">
+                <canvas id="fig2_yt3_yt"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="fig3-section" class="card tab-content">
+        <div class="controls">
+          <div class="param">
+            <label>LPF cutoff (Hz)</label>
+            <input type="range" id="lpf" min="10" max="20000" step="10" />
+            <input
+              type="number"
+              id="lpf_num"
+              min="10"
+              max="20000"
+              step="10"
+              style="width: 90px"
+            />
+          </div>
+
+          <div class="param">
+            <label>Hardware Sampling Rate (kS/s)</label>
+            <input type="range" id="fs_rate" min="10" max="1000" step="10" />
+            <input
+              type="number"
+              id="fs_rate_num"
+              min="10"
+              max="1000"
+              step="10"
+              style="width: 90px"
+            />
+          </div>
+
+          <div class="param">
+            <label>CH Moving Avg (sec)</label>
+            <input
+              type="range"
+              id="ma_ch_sec"
+              min="0.00001"
+              max="0.0005"
+              step="0.00001"
+              value="0.00001"
+            />
+            <input
+              type="number"
+              id="ma_ch_sec_num"
+              min="0.00001"
+              max="0.0005"
+              step="0.00001"
+              value="0.00001"
+              style="width: 90px"
+            />
+          </div>
+
+          <div class="param">
+            <label>Target rate (S/s)</label>
+            <input type="range" id="trate" min="10" max="2000" step="10" />
+            <input
+              type="number"
+              id="trate_num"
+              min="10"
+              max="2000"
+              step="10"
+              style="width: 90px"
+            />
+          </div>
+
+          <div class="param">
+            <label>R Moving Avg (sec)</label>
+            <input
+              type="range"
+              id="ma_r_sec"
+              min="0.1"
+              max="3.0"
+              step="0.1"
+              value="0.5"
+            />
+            <input
+              type="number"
+              id="ma_r_sec_num"
+              min="0.1"
+              max="3.0"
+              step="0.1"
+              value="0.5"
+              style="width: 90px"
+            />
+          </div>
+
+          <div class="param">
+            <label>Block Size (samples)</label>
+            <input
+              type="range"
+              id="block_size"
+              min="1024"
+              max="65536"
+              step="1024"
+            />
+            <input
+              type="number"
+              id="block_size_num"
+              min="1024"
+              max="65536"
+              step="1024"
+              style="width: 90px"
+            />
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <button id="apply" class="btn">적용</button>
+          <button id="resetParams" class="btn">
+            모든 파라미터 및 계수 초기화
+          </button>
+        </div>
+
+        <div class="muted parameter-view" id="paramsView"></div>
+      </section>
+    </main>
+
+    <script type="module" src="/static/app.js"></script>
+
+    <script>
+      const tabButtons = document.querySelectorAll(".tab-btn");
+      const tabContents = document.querySelectorAll(".tab-content");
+
+      tabButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          tabButtons.forEach((b) => b.classList.remove("active"));
+          btn.classList.add("active");
+
+          const targetId = btn.getAttribute("data-target");
+          tabContents.forEach((sec) => {
+            sec.classList.toggle("active", sec.id === targetId);
+          });
+        });
+      });
+    </script>
+  </body>
+</html>

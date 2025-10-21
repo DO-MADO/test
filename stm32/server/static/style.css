@@ -1,0 +1,705 @@
+/* ===================== [공통 변수 & 색상 테마] ===================== */
+:root {
+  --bg: #2a2b32;         /* 전체 배경 */
+  --panel: #1e1f23;      /* 카드/패널 */
+  --muted: #9ca3af;      /* 보조 텍스트 */
+  --text: #f7f7f8;       /* 본문 텍스트 */
+  --accent: #3b82f6;     /* 포인트 컬러 (그대로 유지 가능) */
+  --border: #3a3b45;     /* 경계선 */
+  --label-color: #a1a1aa;/* 라벨 */
+  --panel-hover: #3a3b45;
+}
+
+
+/* ===================== [리셋 & 공통 스타일] ===================== */
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto,
+    Helvetica, Arial, Apple Color Emoji, Segoe UI Emoji;
+  line-height: 1.5;
+  transition: background-color 0.3s, color 0.3s;
+}
+
+/* ===================== [헤더 영역] ===================== */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  background: #2a2b32;
+  backdrop-filter: blur(6px);
+  margin-left: 14px;
+  margin-bottom: 0px;
+}
+
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+header .brand {
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+/* ===================== [그리드 레이아웃 & 카드] ===================== */
+.grid {
+  display: grid;
+  padding: 12px;
+}
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  transition: background-color 0.3s, border-color 0.3s;
+  border-top: none;
+
+}
+.card h2 {
+  margin: 2px 0 12px 0;
+  font-size: 18px;
+  padding: 5px;
+  color: #fff;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  border-top: none;
+}
+
+/* ===================== [컨트롤 (슬라이더/입력)] ===================== */
+.controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr; /* 두 열 */
+  gap: 16px 32px; /* 세로 16px, 가로 32px 간격 */
+}
+
+.param {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.param label {
+  flex: 0 0 190px;     /* 라벨은 항상 160px 차지 */
+  white-space: nowrap; /* 줄바꿈 금지 */
+  margin-right: 8px;   /* 라벨과 슬라이더 사이 여백 */
+  text-align: left;   /* 라벨 텍스트를 오른쪽 정렬 (선택) */
+  margin-left: 10px;
+}
+
+.param input[type="range"] {
+  flex: 1;
+  max-width: 250px;  /* 최대 길이 제한 */
+}
+
+.param input[type="number"] {
+  width: 80px;
+}
+
+.controls label {
+  font-size: 12px;
+  color: var(--label-color);
+}
+.controls input[type="range"] {
+  width: 160px;
+}
+select,
+input[type="number"],
+input[type="text"] {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px 8px;
+  transition: background-color 0.3s, color 0.3s, border-color 0.3s;
+}
+
+/* ===================== [기본 텍스트 & 뮤트 스타일] ===================== */
+.muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ===================== [캔버스 (차트 영역)] ===================== */
+.chart-container {
+  position: relative;
+  height: 360px; /* 원하는 차트 높이 */
+  width: 100%;
+}
+
+.chart-container.large {
+  height: 650px;
+  width: 100%;
+}
+
+/* ===================== [푸터] ===================== */
+footer {
+  text-align: center;
+  padding: 10px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+/* ===================== [범례 & 채널 토글] ===================== */
+.legend-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+}
+.ch-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px 8px;
+  color: #e5e7eb;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.ch-toggle .swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+}
+.ch-toggle.off {
+  opacity: 0.55;
+}
+.ch-toggle.off .swatch {
+  opacity: 0.4;
+}
+
+/* ===================== [툴바 & 버튼] ===================== */
+.toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.btn {
+  background: var(--panel);
+  color: #e5e7eb;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.btn:hover {
+  background: var(--panel-hover, #2a2a2a);
+  color: var(--text, #fff);
+}
+
+.btn5step {
+  background: var(--panel);
+  color: #e5e7eb;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background-color 0.2s, color 0.2s;
+  margin-top: 8px;
+}
+
+.btn5step:hover {
+  background: var(--panel-hover, #2a2a2a);
+  color: var(--text, #fff);
+}
+
+/* 기본 스타일: .tab-btn과 동일하게 설정하여 시각적 일관성 유지 */
+.resetbtn {
+  background: var(--panel);
+  border: none;
+  border-bottom: 2px solid transparent; /* 선택 안된 탭은 보더 안 보이게 */
+  padding: 10px 16px;
+  color: var(--text-muted, #aaa);
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  min-width: 140px;
+}
+
+
+.resetbtn:hover {
+  background: var(--panel-hover);
+  color: var(--text, #fff);
+}
+
+
+/* 기본 스타일: .tab-btn과 동일하게 설정하여 시각적 일관성 유지 */
+.savetbtn {
+  background: var(--panel);
+  border: none;
+  border-bottom: 2px solid transparent; /* 선택 안된 탭은 보더 안 보이게 */
+  padding: 10px 16px;
+  color: var(--text-muted, #aaa);
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  min-width: 140px;
+  border-top-right-radius: 16px;
+}
+
+
+.savetbtn:hover {
+  background: var(--panel-hover);
+  color: var(--text, #fff);
+}
+
+
+.resetbtn.active {
+  background: var(--panel);
+  border-bottom: 2px solid var(--accent, #3b82f6);
+  color: var(--text, #fff);
+  font-weight: 600;
+  font-size: 1.01em;
+  border: 1px solid var(--border); 
+  border-bottom: 1px solid var(--panel); 
+  margin-bottom: -1px;
+}
+
+
+
+/* ===================== [파라미터 컨트롤 & 계수 입력] ===================== */
+#apply,
+#resetParams {
+  margin-top: 14px;
+  font-weight: 600;
+  margin-left: 6px;
+}
+.coeffs {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.coeffs input[type="text"] {
+  width: 160px;
+}
+
+/* ===================== [세부 컨트롤 레이아웃] ===================== */
+.horizontal-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 12px;
+  padding-left: 6px;
+}
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+}
+
+/* ===================== [그래프 범례 스타일] ===================== */
+.graph-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text);
+}
+.graph-legend .swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--accent);
+  border: 1px solid rgba(0, 0, 0, 0.4);
+}
+
+/* ===================== [파라미터 뷰] ===================== */
+.parameter-view {
+  margin-top: 22px;
+}
+.parameter-view p {
+  margin: 0;
+  padding: 10px;
+  font-size: 14px;
+  line-height: 1.4;
+  margin-left: 3px;
+}
+.parameter-view strong {
+  color: #cbd5e1;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.parameter-view .param-value {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* ===================== [버튼 크기 & 강조] ===================== */
+#resetZoom1,
+#resetZoom2 {
+  font-size: 12px;
+}
+#applyStage,
+#saveY1,
+#saveY2,
+#saveYt {
+  font-weight: 600;
+}
+
+
+
+/* ===================== [탭전환 UI 변환을 위한 스타일] ===================== */
+
+.brand-logo {
+  height: auto;   /* 원하는 높이 */
+  width: 100px;
+  display: block; /* 세로 정렬 이슈 방지 */
+}
+
+/* 탭 버튼 영역 */
+.tabs {
+  display: flex;
+  margin: 0;              /* 위쪽 여백 제거 */
+  padding: 0;             /* 기본 padding 제거 */
+  margin-left: 70px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* 첫 번째 탭 버튼의 왼쪽 위 모서리만 둥글게 */
+.tab-btn:first-child {
+  border-top-left-radius: 16px;
+}
+
+
+/* 마지막 탭 버튼의 오른쪽 위 모서리만 둥글게 */
+.tab-btn:last-child {
+  border-top-right-radius: 16px;
+}
+
+
+
+/* 기본 탭 버튼 (브라우저 탭 느낌) */
+.tab-btn {
+  background: var(--panel);
+  border: none;
+  border-bottom: 2px solid transparent; /* 선택 안된 탭은 보더 안 보이게 */
+  padding: 10px 16px;
+  color: var(--text-muted, #aaa);
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  min-width: 140px;
+}
+
+/* hover 시 강조 */
+.tab-btn:hover {
+  background: var(--panel-hover);
+  color: var(--text, #fff);
+}
+
+/* 활성화된 탭 */
+.tab-btn.active {
+  background: var(--panel);
+  border-bottom: 2px solid var(--accent, #3b82f6);
+  color: var(--text, #fff);
+  font-weight: 600;
+  font-size: 1.01em;
+  border: 1px solid var(--border); 
+  border-bottom: 1px solid var(--panel); 
+  margin-bottom: -1px;
+}
+
+/* 탭 콘텐츠 */
+.tab-content {
+  display: none;
+  padding: 16px 0;  /* 탭 아래 여백 */
+}
+
+.tab-content.active {
+  display: block;
+  padding: 16px;
+}
+
+
+.yaxis-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 16px;
+  margin-right: 14px;
+}
+.yaxis-controls label {
+  font-size: 12px;
+  color: var(--label-color);
+}
+.yaxis-input {
+  width: 80px;
+}
+
+.stats-display {
+  display: flex;
+  gap: 12px; /* 각 항목 사이의 간격 */
+  color: #aeb1b8; /* 라벨 기본 텍스트 색상 */
+  font-size: 13px;
+  align-items: center;
+  white-space: nowrap; /* 줄바꿈 방지 */
+  margin-right: 25px;
+}
+.stats-display .stat-item {
+  display: flex;
+  flex-direction: column;
+  text-align: right;
+}
+.stats-display .stat-label {
+  font-size: 11px;
+  color: #777a81;
+}
+.stats-display .stat-value {
+  font-weight: bold;
+  color: #e0e2e8; /* 값(value) 텍스트 색상 */
+}
+
+.stats-display .separator {
+  color: #5a5b64; /* 구분자(|) 색상 */
+  font-weight: normal;
+}
+
+/* 값(숫자+단위) 강조색 */
+  .param-value {
+    color: rgb(96, 165, 250); /* 원하는 색상 */
+    font-weight: 600;         /* 살짝 굵게(선택) */
+  }
+
+
+/* ===================== [보기 모드 탭 바 스타일] ===================== */
+.view-mode-bar {
+  display: flex;
+  border-radius: 4px;
+  padding: 4px;
+  margin-bottom: 16px;
+}
+
+.view-mode-btn {
+  /* flex: 1; <-- 이 한 줄을 삭제하거나 주석 처리합니다. */
+  background: none;
+  border: none;
+  border-radius: 10px;
+  padding: 8px 16px;
+  color: var(--muted);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
+  text-align: center;
+}
+
+/* 마우스를 올렸을 때 효과 */
+.view-mode-btn:not(.active):hover {
+  background-color: var(--panel-hover);
+  color: var(--text);
+}
+
+/* 선택된(활성화된) 버튼 스타일 */
+.view-mode-btn.active {
+  background-color: var(--accent);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+
+#fig3-section h2,
+#fig3-section .controls,
+#fig3-section .toolbar,
+#fig3-section .parameter-view {
+margin-left: 16px;  
+margin-top: 16px;
+}
+
+
+/* ===================== [4ch 탭 리팩토링 스타일] ===================== */
+
+/* 'All' 뷰의 2x2 그리드 컨테이너 */
+#fig2GridContainer {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 16px;
+  width: 100%;
+}
+
+/* 개별 차트를 감싸는 래퍼 */
+.yt-chart-wrapper {
+  display: flex;
+  flex-direction: column;
+  min-width: 0; /* 그리드 내부 요소가 넘치는 것을 방지 */
+}
+
+/* 래퍼 안의 차트 컨테이너가 남은 공간을 모두 차지하도록 설정 */
+.yt-chart-wrapper .chart-container {
+  flex-grow: 1;
+}
+
+/* 래퍼 안의 툴바에 표시될 차트 제목 */
+.yt-chart-title {
+  font-weight: 600;
+  color: var(--text);
+  margin-left: 8px;
+}
+
+/* 단일 뷰 모드일 때 그리드 컨테이너의 스타일 */
+#fig2GridContainer.single-view {
+  display: block; /* 그리드에서 블록으로 변경 */
+  height: auto; /* 높이를 자동으로 조절 */
+}
+
+/* 단일 뷰 모드에서, 선택된 차트(.visible)를 제외한 나머지는 숨김 */
+#fig2GridContainer.single-view .yt-chart-wrapper:not(.visible) {
+  display: none;
+}
+
+/* 단일 뷰에서 선택된 차트의 컨테이너 높이를 크게 설정 */
+#fig2GridContainer.single-view .yt-chart-wrapper.visible .chart-container {
+  height: 600px;
+}
+
+
+
+/* ===================== [R Moving Average 전용 컨트롤] ===================== */
+.r-movavg-param {
+  display: flex;
+  align-items: center;
+  gap: 8px;          /* 기존 코드에서 gap: 8px */
+  margin-left: 20px; /* 기존 인라인 margin-left */
+}
+
+.r-movavg-param label {
+  flex: 0 0 190px;    /* 고정 너비 */
+  white-space: nowrap; 
+  margin-right: 8px;
+  text-align: left;
+  font-size: 12px;
+  color: var(--label-color);
+}
+
+.r-movavg-param input[type="range"] {
+  flex: 1;
+  max-width: 250px;
+  width: 160px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-left: -70px;
+  padding: 6px 8px;
+  transition: background-color 0.3s, color 0.3s, border-color 0.3s;
+}
+
+.r-movavg-param input[type="number"] {
+  width: 90px; /* 기존 인라인 스타일 반영 */
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px 8px;
+  transition: background-color 0.3s, color 0.3s, border-color 0.3s;
+}
+
+/* ===================== [4ch 탭: 실시간 값 표시 영역 스타일] ===================== */
+#ytValuesDisplay {
+  /* 1. <input>과 유사한 모양으로 만듭니다. */
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px 12px; /* 좌우 패딩을 조금 더 넉넉하게 설정 */
+  width: 70%;       /* 부모(.control-group)의 너비를 모두 채움 */
+  margin-left: 208px;
+
+
+  /* 2. 내부 yt0, yt1... 값들을 가로로 정렬합니다. */
+  display: flex;
+  align-items: center;            /* 세로 중앙 정렬 */
+  justify-content: space-around;  /* 내부 항목들을 균등한 간격으로 배치 */
+}
+
+
+
+.control-group:has(#ytValuesDisplay) {
+  margin-top: 4px; /* 이 값을 조절하여 블록 전체를 원하는 만큼 아래로 내릴 수 있습니다. */
+}
+
+
+/* ===================== [4ch 탭 3x1 레이아웃 스타일] ===================== */
+
+/* ===================== [4ch 탭 동적 레이아웃 스타일] ===================== */
+
+/* --- 뷰 모드별 컨테이너 레이아웃 --- */
+
+/* 'All' 뷰: 2x2 그리드 레이아웃 */
+#fig2GridContainer.all-view {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 16px;
+}
+
+/* 'Single' 뷰: 단일 컬럼(블록) 레이아웃 */
+#fig2GridContainer.single-view {
+  display: block;
+}
+
+
+/* --- 채널(yt_Wrapper) 및 스테이지(sub-chart-block) 표시 제어 --- */
+
+/* 'Single' 뷰일 때: 'visible' 클래스가 없는 채널은 숨김 */
+#fig2GridContainer.single-view .yt-chart-wrapper:not(.visible) {
+  display: none;
+}
+
+/* 'All' 뷰일 때: 중간 단계(y2, y3) 그래프는 숨기고 최종(yt) 그래프만 표시 */
+#fig2GridContainer.all-view .sub-chart-block[data-stage="y2"],
+#fig2GridContainer.all-view .sub-chart-block[data-stage="y3"] {
+  display: none;
+}
+
+
+/* --- 공통 내부 스타일 --- */
+
+/* 채널 래퍼: 기본적으로 세로 Flexbox (3x1 레이아웃의 기반) */
+.yt-chart-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* 개별 스테이지(서브 차트) 블록 스타일 */
+.sub-chart-block {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background-color: #232429;
+  flex: 1; /* 남은 공간을 균등하게 차지하여 3x1 비율 유지 */
+}
+
+.sub-chart-block .chart-container {
+  flex-grow: 1;
+}
+
+
+/* ❗ [추가] 'All' 뷰일 때 각 차트 컨테이너의 높이를 지정합니다. */
+#fig2GridContainer.all-view .chart-container {
+  height: 300px; /* 2x2 그리드에 맞는 적절한 높이로 조절 */
+}
