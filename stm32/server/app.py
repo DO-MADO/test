@@ -57,6 +57,7 @@ from copy import deepcopy               # 객체 복사
 from datetime import datetime           # 시간대 변환/타임스탬프 처리
 from zoneinfo import ZoneInfo           # 시간대 변환/타임스탬프 처리
 import time
+from serial_io import encode_cfg
 
 
 
@@ -314,6 +315,8 @@ async def get_params():
     return _with_legacy_keys(asdict(app.state.pipeline.params))
 
 
+
+
 @app.post("/api/params")
 async def set_params(p: ParamsIn):
     """
@@ -390,6 +393,7 @@ async def set_params(p: ParamsIn):
 
 
 
+
 @app.post("/api/params/reset")
 async def reset_params():
     """파라미터를 기본값으로 되돌리고 파이프라인을 재시작합니다."""
@@ -413,6 +417,30 @@ async def reset_params():
     app.state.pipeline._broadcast(payload)  # 초기화된 값 즉시 push
 
     return {"ok": True, "restarted": True, "params": _with_legacy_keys(asdict(new_pipeline.params))}
+
+
+
+def _send_cfg_if_serial(pipeline):
+    # Serial TX 포트가 있을 때만 전송
+    sp = getattr(pipeline.params, "serial", None)
+    if not sp or not pipeline.source or not getattr(pipeline.source, "tx", None):
+        return
+    params = pipeline.params
+    cfg_line = encode_cfg(
+        lpf_cutoff_hz = params.lpf_cutoff_hz,
+        sampling_rate = params.sampling_frequency/1000.0,  # kS/s로 맞춘다면 변환 주의
+        target_rate   = params.target_rate_hz,
+        movavg_r      = params.movavg_r,
+        movavg_ch     = params.movavg_ch,
+        channel_mask  = 255,  # 8채널 고정
+        block_size    = params.block_samples,
+        coeffs_y1     = params.y1_den,   # alias 주의
+        coeffs_y2     = params.y2_coeffs,
+        coeffs_y3     = params.y3_coeffs,
+        coeffs_yt     = [params.E, params.F],
+    )
+    pipeline.source.tx.write_line(cfg_line)
+
 
 
 
@@ -457,13 +485,20 @@ async def ws_endpoint(ws: WebSocket):
 if __name__ == "__main__":
     # --- 1. 명령줄 인자 파싱 ---
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["synthetic", "cproc"], default="cproc")
+    parser.add_argument("--mode", choices=["synthetic", "cproc", "serial"], default="cproc") # serial 추가
     parser.add_argument("--uri", type=str, default="192.168.1.133", help="device IP")
     parser.add_argument("--fs", type=float, default=100000, help="ADC sampling frequency (Hz)")
     parser.add_argument("--block", type=int, default=16384, help="Samples per block")
     parser.add_argument("--exe", type=str, default="iio_reader.exe", help="Path to C executable")
     parser.add_argument("--host", type=str, default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
+    
+    # serial I/O 옵션
+    parser.add_argument("--rx_port", type=str, default="COM11")
+    parser.add_argument("--rx_baud", type=int, default=115200)
+    parser.add_argument("--tx_port", type=str, default=None)
+    parser.add_argument("--tx_baud", type=int, default=115200)
+
     args = parser.parse_args()
 
     # --- 2. 서버 시작 시의 기본 파라미터 생성 ---
@@ -484,6 +519,20 @@ if __name__ == "__main__":
         label_names=["yt0", "yt1", "yt2", "yt3"],
         # 나머지 계수들은 PipelineParams에 정의된 기본값을 사용
     )
+    
+    #serial 파라미터 주입
+    if args.mode == "serial":
+        # 문자열 "None", "", "null" → 실제 None 처리
+        def _norm(v):
+            if v is None: return None
+            s = str(v).strip().lower()
+            return None if s in ("none", "", "null") else v
+        startup_params.serial = adc_pipeline.SerialParams(
+            port=_norm(args.rx_port),
+            baud=args.rx_baud,
+            tx_port=_norm(args.tx_port),
+            tx_baud=args.tx_baud,
+        )
 
 
     # --- 3. 파이프라인 생성 및 시작 ---

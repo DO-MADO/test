@@ -33,9 +33,12 @@ import time
 import math
 from dataclasses import dataclass, field 
 from typing import Callable, Optional, List, Dict, Tuple
+from serial_io import SerialLine, parse_dat_frame
+import collections
 
 import numpy as np
 import sys
+
 
 
 # -----------------------------
@@ -84,6 +87,118 @@ class SourceBase:
 
     def terminate(self):
         pass
+
+
+
+###################################################################################
+###################################################################################
+
+@dataclass
+class SerialParams:
+    port: str = "COM11"       # 수신 포트(PCB>PC)
+    baud: int = 115200
+    tx_port: Optional[str] = None  # 송신 포트(PC>PCB) 필요 시
+    tx_baud: int = 115200
+
+class SerialSource(SourceBase):
+    """
+    RS485/RS232 텍스트 프레임을 읽어 5종의 '파이프라인 프레임'으로
+    분해하여 순차적으로 반환합니다.
+    """
+    FT_STAGE3 = 0x01
+    FT_STAGE5 = 0x02
+    FT_YT     = 0x03
+    FT_STAGE7_Y2 = 0x04
+    FT_STAGE8_Y3 = 0x05
+
+    def __init__(self, params: PipelineParams):
+        self.params = params
+        sp = getattr(params, "serial", None)
+        if sp is None:
+            sp = SerialParams()
+            params.serial = sp
+
+        # RX 포트가 없거나 "None"류면 수신 비활성화
+        self.rx = None
+        if sp.port and str(sp.port).strip().lower() not in ("none", "", "null"):
+            try:
+                self.rx = SerialLine(sp.port, sp.baud)
+            except Exception as e:
+                print(f"[SerialSource] RX open failed ({sp.port}): {e}", file=sys.stderr)
+                self.rx = None
+
+        # 5종 프레임을 순차 반환하기 위한 큐
+        self.frame_queue = collections.deque()
+
+        # TX 포트는 옵션
+        self.tx = None
+        if sp.tx_port and str(sp.tx_port).strip().lower() not in ("none", "", "null"):
+            try:
+                self.tx = SerialLine(sp.tx_port, sp.tx_baud)
+            except Exception as e:
+                print(f"[SerialSource] TX open failed ({sp.tx_port}): {e}", file=sys.stderr)
+                self.tx = None
+
+    def terminate(self):
+        try: self.rx.close()
+        except: pass
+        try:
+            if self.tx: self.tx.close()
+        except: pass
+
+    def read_frame(self) -> Tuple[int, np.ndarray]:
+        """
+        큐에 프레임이 있으면 먼저 반환.
+        없으면 시리얼에서 'st|...|end' 한 줄 읽어 5종(S3,S5,Y2,Y3,YT)으로 분해해
+        큐에 넣고, 첫 번째(S3)를 반환.
+        """
+
+        # 1) 큐에 남은 프레임 먼저 소진
+        if self.frame_queue:
+            return self.frame_queue.popleft()
+
+        # 2) RX 비활성화면 아무 것도 읽을 수 없으므로 빈 프레임
+        if self.rx is None:
+            time.sleep(0.01)
+            return self.FT_YT, np.empty((0, 4), dtype=np.float32)
+
+        # 3) 시리얼에서 한 줄 읽기
+        line = self.rx.read_frame()
+
+        # 4) 읽을 게 없으면(타임아웃 등) 빈 프레임
+        if line is None:
+            time.sleep(0.001)
+            return self.FT_YT, np.empty((0, 4), dtype=np.float32)
+
+        try:
+            # 5) 파싱 → meta, RAW8(8), RAVG4(4), Y2(4), Y3(4), YT(4)
+            meta, raw8, ravg4, y2, y3, yt = parse_dat_frame(line)
+        except Exception as e:
+            print(f"[SerialSource] Parse error: {e}", file=sys.stderr)
+            # 파싱 실패 시에도 루프가 죽지 않도록 빈 프레임 반환
+            return self.FT_YT, np.empty((0, 4), dtype=np.float32)
+
+        # 6) CProcSource와 동일한 shape로 맞춤 (시간축=1, 채널축=n)
+        s3  = np.array([raw8],  dtype=np.float32)  # (1,8)
+        s5  = np.array([ravg4], dtype=np.float32)  # (1,4)
+        y2a = np.array([y2],    dtype=np.float32)  # (1,4)
+        y3a = np.array([y3],    dtype=np.float32)  # (1,4)
+        yta = np.array([yt],    dtype=np.float32)  # (1,4)
+
+        # 7) 파이프라인이 기대하는 순서로 큐에 적재: S3 → S5 → Y2 → Y3 → YT
+        self.frame_queue.append((self.FT_STAGE3,    s3))
+        self.frame_queue.append((self.FT_STAGE5,    s5))
+        self.frame_queue.append((self.FT_STAGE7_Y2, y2a))
+        self.frame_queue.append((self.FT_STAGE8_Y3, y3a))
+        self.frame_queue.append((self.FT_YT,        yta))
+
+        return self.frame_queue.popleft()
+
+
+###################################################################################
+###################################################################################
+
+
 
 
 # -----------------------------
@@ -328,6 +443,8 @@ class Pipeline:
         elif self.params.mode == "synthetic":
             # SyntheticSource는 C와 달리 rate_hz만 필요
             self.src = SyntheticSource(rate_hz=self.params.target_rate_hz)
+        elif self.params.mode == "serial":     # 시리얼 통신                  
+            self.src = SerialSource(self.params)      # 시리얼 통신            
         else:
             # (향후) STM32용 SerialSource 추가 시 여기 분기 확장
             raise ValueError(f"Unknown mode: {self.params.mode}")

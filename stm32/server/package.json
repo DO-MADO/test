@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "collections": "^5.1.13",
+    "serial": "^0.0.9"
+  }
+}
