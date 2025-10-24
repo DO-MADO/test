@@ -298,6 +298,8 @@ async def save_data(data: AllChartData):
 async def set_coeffs(p: CoeffsUpdate):
     """실행 중인 C 프로세스에 계수만 실시간으로 업데이트합니다."""
     app.state.pipeline.update_coeffs(p.key, p.values)
+    
+    _send_cfg_if_serial(app.state.pipeline)
 
     # UI의 'Configuration' 탭 정보도 동기화
     updated_params = _with_legacy_keys(asdict(app.state.pipeline.params))
@@ -317,72 +319,74 @@ async def get_params():
 
 
 
+# app.py
+
 @app.post("/api/params")
 async def set_params(p: ParamsIn):
     """
-    파라미터 업데이트 엔드포인트 (최종 버전)
-    - UI의 모든 파라미터를 처리하고 단위를 변환합니다.
-    - C 코드에 영향을 주는 파라미터 변경 시 파이프라인을 재시작하고
-    'restarted' 신호를 보내 페이지 새로고침을 유도합니다.
-
-
-    🔎 흐름 정리
-    1) 프런트에서 바뀐 값들만 옵니다(옵션 필드). 예: {movavg_r_sec: 0.5}
-    2) 초 단위 값을 샘플 개수로 바꿔야 하는 항목은 계산합니다.
-    - CH MA(sec) → sampling_frequency 로 곱해서 샘플수
-    - R MA(sec) → target_rate_hz 로 곱해서 샘플수
-    3) 실제 변경이 있는지만 확인하고, 중요한 키가 바뀌면 파이프라인 재시작.
-    (중요 키: fs, block_samples, target_rate_hz, lpf_cutoff_hz, movavg_r, movavg_ch)
-    4) 재시작되면 새 Pipeline 인스턴스를 app.state.pipeline 에 등록하고, 클라이언트에게 알려줍니다.
+    파라미터 업데이트 엔드포인트 (최종 수정 버전)
+    - deepcopy를 사용해 'serial' 같은 동적 속성을 보존합니다.
+    - C 코드에 영향을 주는 파라미터 변경 시 파이프라인을 재시작합니다.
     """
     
     # 1. UI로부터 받은 데이터 중 실제 값이 있는 것만 사전 형태로 추출
     body = p.model_dump(exclude_unset=True)
     
-    # 2. 현재 파이프라인의 파라미터를 사전 형태로 복사
+    # ❗ [핵심 수정] 
+    # asdict 대신 deepcopy를 사용합니다.
+    # 이렇게 해야 dataclass에 정의되지 않은 '.serial' 속성까지 보존됩니다.
     current_params = app.state.pipeline.params
-    new_params_dict = asdict(current_params)
+    new_params_obj = deepcopy(current_params) # 새 객체 생성
     
     # 3. '초(sec)' 단위를 C가 사용할 '샘플 수'로 변환
     #    - 변환에 필요한 최신 주파수 값을 사용 (body에 있으면 body 값, 없으면 현재 값)
     fs = body.get("sampling_frequency", current_params.sampling_frequency)
     tr = body.get("target_rate_hz", current_params.target_rate_hz)
 
+    # ❗ [핵심 수정] body 딕셔너리에 계산된 값을 추가
     if "movavg_ch_sec" in body:
         sec = body["movavg_ch_sec"]
-        # CH MA는 원본 신호에 적용되므로 'sampling_frequency'(fs)로 계산
         body["movavg_ch"] = max(1, round(sec * fs))
 
     if "movavg_r_sec" in body:
         sec = body["movavg_r_sec"]
-        # R MA는 시간 평균 후 신호에 적용되므로 'target_rate_hz'(tr)로 계산
         body["movavg_r"] = max(1, round(sec * tr))
 
-    # 4. 변경된 값이 있는지 확인하고, 있다면 새로운 파라미터 사전에 업데이트
+    # 4. 변경된 값이 있는지 확인하고, 있다면 'new_params_obj' 객체를 직접 업데이트
     changed = {}
     for key, value in body.items():
-        if hasattr(current_params, key) and value != getattr(current_params, key):
-            new_params_dict[key] = value
-            changed[key] = value
+        # ❗ [핵심 수정] 
+        # PipelineParams에 정의된 필드만 업데이트합니다.
+        # (movavg_ch_sec 같은 임시 키는 new_params_obj에 저장되지 않습니다)
+        if hasattr(new_params_obj, key):
+            if value != getattr(new_params_obj, key):
+                setattr(new_params_obj, key, value) # 객체 속성 직접 변경
+                changed[key] = value
+        
     
     # 5. C 코드에 영향을 주는 파라미터 중 하나라도 바뀌면 재시작
     restarted = False
     critical_keys = ["sampling_frequency", "block_samples", "target_rate_hz", "lpf_cutoff_hz", "movavg_r", "movavg_ch"]
+    
+    # ❗ [핵심 수정] changed 딕셔너리에서 검사
     if any(k in changed for k in critical_keys):
         p_current = app.state.pipeline
         p_current.stop()
         
-        # 업데이트된 파라미터 사전으로 새 PipelineParams 객체 생성
-        new_params_obj = PipelineParams(**new_params_dict)
-        
-        # 새 파이프라인 생성 및 시작
+        # ❗ [핵심 수정]
+        # 이미 완성된 new_params_obj를 그대로 사용합니다.
+        # 이 객체는 '.serial' 속성을 부모로부터 물려받았습니다.
         new_pipeline = Pipeline(params=new_params_obj, broadcast_fn=p_current.broadcast_fn)
+        
         new_pipeline.start()
         app.state.pipeline = new_pipeline # 앱의 상태를 새 파이프라인으로 교체
         restarted = True
         print("[INFO] Pipeline has been restarted due to critical parameter change.")
     
-    # 6. 최종 결과 반환
+    # 6. 파라미터 변경(및 재시작)이 완료된 후, PCB에 최신 설정 전송
+    _send_cfg_if_serial(app.state.pipeline)    
+    
+    # 7. 최종 결과 반환
     return {
         "ok": True, 
         "changed": changed, 
@@ -423,7 +427,7 @@ async def reset_params():
 def _send_cfg_if_serial(pipeline):
     # Serial TX 포트가 있을 때만 전송
     sp = getattr(pipeline.params, "serial", None)
-    if not sp or not pipeline.source or not getattr(pipeline.source, "tx", None):
+    if not sp or not pipeline.src or not getattr(pipeline.src, "tx", None):
         return
     params = pipeline.params
     cfg_line = encode_cfg(
@@ -439,7 +443,7 @@ def _send_cfg_if_serial(pipeline):
         coeffs_y3     = params.y3_coeffs,
         coeffs_yt     = [params.E, params.F],
     )
-    pipeline.source.tx.write_line(cfg_line)
+    pipeline.src.tx.write_line(cfg_line)
 
 
 
