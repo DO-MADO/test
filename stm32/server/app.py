@@ -57,7 +57,7 @@ from copy import deepcopy               # 객체 복사
 from datetime import datetime           # 시간대 변환/타임스탬프 처리
 from zoneinfo import ZoneInfo           # 시간대 변환/타임스탬프 처리
 import time
-from serial_io import encode_cfg
+from serial_io import encode_cfg        # 직렬 설정 프레임 인코더
 
 
 
@@ -104,13 +104,13 @@ PipelineParams = adc_pipeline.PipelineParams
 # • ParamsIn: /api/params로 들어오는 변경 가능 파라미터(옵션 필드)
 
 
-#  [추가] Chart.js의 단일 데이터셋 구조를 정확히 반영하는 모델
+# Chart.js의 단일 데이터셋 구조를 정확히 반영하는 모델
 class Dataset(BaseModel):
     label: Optional[str] = None
     data: List[float]
 
 
-#  [수정] ChartData 모델이 새로운 Dataset 모델을 사용하도록 변경
+# ChartData 모델이 새로운 Dataset 모델을 사용하도록 변경
 class ChartData(BaseModel):
     labels: List[float]
     datasets: List[Dataset] # List[Dict[...]] -> List[Dataset]
@@ -122,7 +122,7 @@ class AllChartData(BaseModel):
     stages789: Dict[str, Dict[str, ChartData]]
 
 
-#  [수정] ParamsIn 모델을 아래와 같이 분리/수정
+# ParamsIn 모델을 아래와 같이 분리/수정
 class CoeffsUpdate(BaseModel):
     key: str # 예: "y1_den", "y2_coeffs" 등
     values: List[float]
@@ -178,7 +178,7 @@ async def index():
 
 
 
-# [추가] 데이터 처리 및 CSV 저장을 위한 헬퍼 함수
+# 데이터 처리 및 CSV 저장을 위한 헬퍼 함수
 # - /api/save_data에서 호출됩니다.
 # - 여러 차트 데이터를 시간축에 맞춰 합쳐 하나의 CSV로 저장합니다.
 # - start_ts(Unix timestamp) 기준으로 labels(상대 시각)를 절대 시각으로 변환합니다.
@@ -192,7 +192,7 @@ def process_and_save_csv(all_data: AllChartData, file_path: Path, start_ts: floa
     """
     all_series = []
     
-    # [수정] start_ts 인자를 받도록 시그니처 변경
+    # start_ts 인자를 받도록 시그니처 변경
     def create_series_from_chart_data(chart_data: ChartData, base_name: str, start_ts: float) -> list:
         series_list = []
         """ChartData → pandas.Series 목록으로 변환
@@ -229,7 +229,7 @@ def process_and_save_csv(all_data: AllChartData, file_path: Path, start_ts: floa
             series_list.append(df)
         return series_list
 
-    #  [수정] create_series_from_chart_data 호출 시 start_ts 전달
+    # create_series_from_chart_data 호출 시 start_ts 전달
     all_series.extend(create_series_from_chart_data(all_data.stage3, 'S3', start_ts))
     all_series.extend(create_series_from_chart_data(all_data.stage5, 'S5', start_ts))
     for ch, stages in all_data.stages789.items():
@@ -243,17 +243,17 @@ def process_and_save_csv(all_data: AllChartData, file_path: Path, start_ts: floa
     final_df = pd.concat(all_series, axis=1)
     final_df.sort_index(inplace=True)
     
-    #  [추가] CSV로 저장하기 전, 인덱스(시간)의 형식을 원하는 문자열로 변경합니다.
+    #  CSV로 저장하기 전, 인덱스(시간)의 형식을 원하는 문자열로 변경합니다.
     # '%Y-%m-%d %H:%M:%S.%f'는 마이크로초(6자리)까지 표시, .str[:-3]으로 밀리초(3자리)에서 자름
     final_df.index = final_df.index.strftime('%Y-%m-%d %H:%M:%S.%f').str[:-3]
     
-    #  [수정] CSV 저장 시 인덱스 컬럼명을 'Timestamp'로 변경
+    # CSV 저장 시 인덱스 컬럼명을 'Timestamp'로 변경
     final_df.to_csv(file_path, float_format='%.6f', index_label='Timestamp')
 
 
 
 
-# [추가] 데이터 저장을 위한 새로운 API 엔드포인트
+# 데이터 저장을 위한 새로운 API 엔드포인트
 # - 프론트에서 현재 차트 데이터를 AllChartData 형태로 보내면 CSV로 저장합니다.
 # - 로그 경로는 ../../logs/날짜/log_data*.csv 에 순번 붙여 저장합니다.
 @app.post("/api/save_data")
@@ -274,13 +274,13 @@ async def save_data(data: AllChartData):
                 break
             counter += 1
             
-        #  [추가] pipeline에서 데이터 시작 시간(Unix timestamp)을 가져옵니다.
+        # pipeline에서 데이터 시작 시간(Unix timestamp)을 가져옵니다.
         start_timestamp = app.state.pipeline.start_time
         if start_timestamp is None:
             # 데이터가 아직 수신되지 않은 경우, 현재 시간을 기준으로 합니다.
             start_timestamp = time.time()
             
-        #  [수정] 데이터 처리 함수 호출 시 start_timestamp 전달
+        # 데이터 처리 함수 호출 시 start_timestamp 전달
         process_and_save_csv(data, file_path, start_timestamp)
         
         return {"ok": True, "message": f"Data saved to {file_path}"}
@@ -291,7 +291,7 @@ async def save_data(data: AllChartData):
 
 
 
-# [신규 추가] 계수 업데이트를 위한 API 엔드포인트
+# 계수 업데이트를 위한 API 엔드포인트
 # - 파이프라인(현재 CProcSource)에 실시간으로 계수를 반영합니다. (프로세스 재시작 없음)
 # - /api/coeffs 로 {key, values} 를 보내면 pipeline.update_coeffs 가 처리합니다.
 @app.post("/api/coeffs")
@@ -299,6 +299,8 @@ async def set_coeffs(p: CoeffsUpdate):
     """실행 중인 C 프로세스에 계수만 실시간으로 업데이트합니다."""
     app.state.pipeline.update_coeffs(p.key, p.values)
     
+    
+    # [Serial CFG 송신 트리거] 직렬 TX가 켜져 있으면 최신 설정 프레임(st|...|end) 전송
     _send_cfg_if_serial(app.state.pipeline)
 
     # UI의 'Configuration' 탭 정보도 동기화
@@ -319,8 +321,6 @@ async def get_params():
 
 
 
-# app.py
-
 @app.post("/api/params")
 async def set_params(p: ParamsIn):
     """
@@ -332,18 +332,20 @@ async def set_params(p: ParamsIn):
     # 1. UI로부터 받은 데이터 중 실제 값이 있는 것만 사전 형태로 추출
     body = p.model_dump(exclude_unset=True)
     
-    # ❗ [핵심 수정] 
+    
     # asdict 대신 deepcopy를 사용합니다.
     # 이렇게 해야 dataclass에 정의되지 않은 '.serial' 속성까지 보존됩니다.
     current_params = app.state.pipeline.params
     new_params_obj = deepcopy(current_params) # 새 객체 생성
+    
     
     # 3. '초(sec)' 단위를 C가 사용할 '샘플 수'로 변환
     #    - 변환에 필요한 최신 주파수 값을 사용 (body에 있으면 body 값, 없으면 현재 값)
     fs = body.get("sampling_frequency", current_params.sampling_frequency)
     tr = body.get("target_rate_hz", current_params.target_rate_hz)
 
-    # ❗ [핵심 수정] body 딕셔너리에 계산된 값을 추가
+
+    # body 딕셔너리에 계산된 값을 추가
     if "movavg_ch_sec" in body:
         sec = body["movavg_ch_sec"]
         body["movavg_ch"] = max(1, round(sec * fs))
@@ -352,10 +354,10 @@ async def set_params(p: ParamsIn):
         sec = body["movavg_r_sec"]
         body["movavg_r"] = max(1, round(sec * tr))
 
+
     # 4. 변경된 값이 있는지 확인하고, 있다면 'new_params_obj' 객체를 직접 업데이트
     changed = {}
     for key, value in body.items():
-        # ❗ [핵심 수정] 
         # PipelineParams에 정의된 필드만 업데이트합니다.
         # (movavg_ch_sec 같은 임시 키는 new_params_obj에 저장되지 않습니다)
         if hasattr(new_params_obj, key):
@@ -364,16 +366,17 @@ async def set_params(p: ParamsIn):
                 changed[key] = value
         
     
+    
     # 5. C 코드에 영향을 주는 파라미터 중 하나라도 바뀌면 재시작
     restarted = False
     critical_keys = ["sampling_frequency", "block_samples", "target_rate_hz", "lpf_cutoff_hz", "movavg_r", "movavg_ch"]
     
-    # ❗ [핵심 수정] changed 딕셔너리에서 검사
+    
+    # changed 딕셔너리에서 검사
     if any(k in changed for k in critical_keys):
         p_current = app.state.pipeline
         p_current.stop()
         
-        # ❗ [핵심 수정]
         # 이미 완성된 new_params_obj를 그대로 사용합니다.
         # 이 객체는 '.serial' 속성을 부모로부터 물려받았습니다.
         new_pipeline = Pipeline(params=new_params_obj, broadcast_fn=p_current.broadcast_fn)
@@ -424,25 +427,119 @@ async def reset_params():
 
 
 
+
+# ============================================================
+# [Helper] CFG 라인 생성(검증 포함) 래퍼
+# - 목적: PipelineParams → (검증) → st|...|end 한 줄 프레임 생성
+# - 이 래퍼를 쓰면, 배열 길이(6/6/6/2), mask 범위(0..255), block>0 등
+#   기본적인 프로토콜 안전성이 자동으로 보장됩니다.
+# - 사용처: _send_cfg_if_serial() 내부에서 cfg_line 생성 시 호출
+# ============================================================
+from serial_io import encode_cfg, validate_cfg_args  # validate 함수도 가져옵니다.
+
+def _build_cfg_line_with_validation(params) -> str:
+    """
+    PipelineParams → 'PC→PCB 설정 프레임(압축형 11필드)' 문자열 생성.
+    내부 순서:
+      (1) PipelineParams에서 필요한 값 꺼내기
+      (2) 명세 단위 맞추기 (예: sampling_rate는 kS/s로 전송)
+      (3) validate_cfg_args(...)로 형/길이/범위 검증
+      (4) encode_cfg(...)로 st|...|end 한 줄 문자열 생성
+
+    검증 규칙(예시):
+      - coeffs_y1/2/3 길이 = 6, coeffs_yt 길이 = 2
+      - sampling_rate > 0, block_size > 0
+      - 0 <= channel_mask <= 255  (8채널 고정 시스템이면 255 권장)
+
+    예외:
+      - 검증 실패 시 ValueError 발생 → 호출부에서 잡아서 로깅/무시/재시도 판단
+    """
+    
+    # 1) 파라미터 꺼내기
+    lpf_cutoff_hz = params.lpf_cutoff_hz
+    
+    
+    # 주의: 펌웨어 명세가 kS/s라면 Hz → kS/s 변환
+    sampling_rate_ksps = params.sampling_frequency / 1000.0
+    target_rate   = params.target_rate_hz
+    movavg_r      = params.movavg_r
+    movavg_ch     = params.movavg_ch
+    channel_mask  = 255  # 8채널 고정 시스템: 0xFF 권장(필요시 params에서 읽어도 됨)
+    block_size    = params.block_samples
+
+
+    # 계수 alias (PipelineParams의 필드명 ↔ 프로토콜 명세 표기 통일)
+    coeffs_y1 = params.y1_den
+    coeffs_y2 = params.y2_coeffs
+    coeffs_y3 = params.y3_coeffs
+    coeffs_yt = [params.E, params.F]
+
+
+    # 2) (선택) 범위/관계 추가 체크를 하고 싶다면 여기에서 더 보강 가능
+    # 예: LPF < (sampling_rate_ksps*1000)/2  (샘플링 이론상 나이퀴스트)
+    # if lpf_cutoff_hz >= (params.sampling_frequency / 2):
+    #     raise ValueError("lpf_cutoff_hz must be lower than Nyquist (Fs/2).")
+
+    # 3) validate: 길이/타입/범위
+    validate_cfg_args(
+        lpf_cutoff_hz, sampling_rate_ksps, target_rate,
+        movavg_r, movavg_ch, channel_mask, block_size,
+        coeffs_y1, coeffs_y2, coeffs_y3, coeffs_yt,
+    )
+
+
+    # 4) encode: 검증 통과 후 한 줄 프레임 생성
+    return encode_cfg(
+        lpf_cutoff_hz = lpf_cutoff_hz,        # LPF 컷오프(Hz)
+        sampling_rate = sampling_rate_ksps,    # 샘플링 주파수(kS/s) ※ STM32측과 단위 kS/s 일치 확인 !!
+        target_rate   = target_rate,           # 리포트/다운샘플 목표 레이트(Hz)
+        movavg_r      = movavg_r,              # 이동평균 R 파라미터
+        movavg_ch     = movavg_ch,             # 채널 평균 파라미터
+        channel_mask  = channel_mask,          # 채널 마스크(8채널=255)
+        block_size    = block_size,            # 블록 크기(samples)
+        coeffs_y1     = coeffs_y1,             # y1 계수(6)
+        coeffs_y2     = coeffs_y2,             # y2 계수(6)
+        coeffs_y3     = coeffs_y3,             # y3 계수(6)
+        coeffs_yt     = coeffs_yt,             # yt 계수(2)
+    )
+
+# ────*────*────*────*────*────*───*────*────*────*────*────*────*────*────*
+
+
 def _send_cfg_if_serial(pipeline):
-    # Serial TX 포트가 있을 때만 전송
+    
+    """
+    [직렬 CFG 송신 트리거]
+    - 목적: 현재 PipelineParams를 기반으로 'PC → PCB 설정 프레임(11필드 압축형)'을 만들어,
+            직렬(TX) 포트가 활성화된 경우에만 st|...|end 한 줄로 전송한다.
+    - 호출 위치:
+        • /api/coeffs  (계수 값 실시간 변경 시)
+        • /api/params  (중요 파라미터 변경 및 재시작 이후)
+    - 안전장치:
+        • 직렬 포트 미설정, 소스 미생성, TX 핸들 부재 시 조용히 리턴(송신 안 함)
+
+    [주의/규칙]
+    - encode_cfg(...)는 "11 필드 압축형" 포맷을 생성: st / 7 스칼라 / 4 배열 / end
+      → 내부 배열 길이 고정: y1[6], y2[6], y3[6], yt[2]
+    - sampling_rate 단위 주의: 여기서는 kS/s로 보낸다 (예: 100_000 Hz → 100.0 kS/s).
+      펌웨어 쪽 명세와 단위를 반드시 일치시킬 것.
+    - channel_mask: 8채널 고정 시스템이면 255(0xFF) 고정 사용.
+    """
+    
+    # Serial TX 포트가 있을 때만 전송 (없으면 조용히 종료)
     sp = getattr(pipeline.params, "serial", None)
     if not sp or not pipeline.src or not getattr(pipeline.src, "tx", None):
         return
     params = pipeline.params
-    cfg_line = encode_cfg(
-        lpf_cutoff_hz = params.lpf_cutoff_hz,
-        sampling_rate = params.sampling_frequency/1000.0,  # kS/s로 맞춘다면 변환 주의
-        target_rate   = params.target_rate_hz,
-        movavg_r      = params.movavg_r,
-        movavg_ch     = params.movavg_ch,
-        channel_mask  = 255,  # 8채널 고정
-        block_size    = params.block_samples,
-        coeffs_y1     = params.y1_den,   # alias 주의
-        coeffs_y2     = params.y2_coeffs,
-        coeffs_y3     = params.y3_coeffs,
-        coeffs_yt     = [params.E, params.F],
-    )
+
+    try:
+        # ✅ 래퍼 사용: 검증 + 인코딩을 한 번에
+        cfg_line = _build_cfg_line_with_validation(params)
+    except ValueError as e:
+        # 검증 실패 시 조용히 로깅하고 송신 스킵(운영 환경에 맞게 정책 조정 가능)
+        print(f"[CFG VALIDATION ERROR] {e}")
+        return
+
     pipeline.src.tx.write_line(cfg_line)
 
 
@@ -497,11 +594,12 @@ if __name__ == "__main__":
     parser.add_argument("--host", type=str, default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     
-    # serial I/O 옵션
-    parser.add_argument("--rx_port", type=str, default="COM11")
-    parser.add_argument("--rx_baud", type=int, default=115200)
-    parser.add_argument("--tx_port", type=str, default=None)
-    parser.add_argument("--tx_baud", type=int, default=115200)
+    
+    # serial I/O 옵션 (Serial loopback/MCU와의 실제 통신 모두 지원)
+    parser.add_argument("--rx_port", type=str, default="COM11") # - rx_port : PCB → PC 데이터 수신 포트 (예: COM11, /dev/ttyUSB0)
+    parser.add_argument("--rx_baud", type=int, default=115200)  # - rx_baud : 수신 속도 (MCU/UART 설정과 동일)
+    parser.add_argument("--tx_port", type=str, default=None)    # - tx_port : PC → PCB 설정 프레임 송신 포트 (없으면 None → 송신 비활성)
+    parser.add_argument("--tx_baud", type=int, default=115200)  # - tx_baud : 송신 속도 (MCU/UART 설정과 동일)
 
     args = parser.parse_args()
 
@@ -526,21 +624,25 @@ if __name__ == "__main__":
     
     #serial 파라미터 주입
     if args.mode == "serial":
-        # 문자열 "None", "", "null" → 실제 None 처리
+        # 문자열 "None", "", "null" → 실제 None 처리 (명령행 인자 일관성 대응)
         def _norm(v):
             if v is None: return None
             s = str(v).strip().lower()
             return None if s in ("none", "", "null") else v
+        
+        
+        # PipelineParams.serial 에 포트/보오레이트 세팅
+        # - 보오레이트(rx_baud/tx_baud)는 MCU/UART 설정과 반드시 일치해야 함
         startup_params.serial = adc_pipeline.SerialParams(
-            port=_norm(args.rx_port),
+            port=_norm(args.rx_port),      # - port   : RX 전용 포트(PCB → PC 수신)
             baud=args.rx_baud,
-            tx_port=_norm(args.tx_port),
-            tx_baud=args.tx_baud,
+            tx_port=_norm(args.tx_port),   # - tx_port: TX 전용 포트(PC → PCB 송신). None이면 CFG 송신 비활성
+            tx_baud=args.tx_baud,       
         )
 
 
     # --- 3. 파이프라인 생성 및 시작 ---
-    #  [수정] pipeline에 startup_params의 '복사본'을 전달하여
+    # pipeline에 startup_params의 '복사본'을 전달하여
     # default_params가 오염되지 않도록 합니다.
     pipeline = Pipeline(params=deepcopy(startup_params), broadcast_fn=lambda payload: None)
     pipeline.start()

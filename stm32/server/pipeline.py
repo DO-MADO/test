@@ -91,20 +91,54 @@ class SourceBase:
 
 
 ###################################################################################
+# [Serial] 직렬 통신 소스 (PCB ↔ PC 텍스트 프레임)
+# - 프로토콜: st|...|end  (파이프 구분자 '|', 배열 내부는 ',')
+# - PCB → PC: DAT 프레임 6필드(메타5 + payload(24)) 수신 & 파싱
+# - PC → PCB: 설정 프레임(11필드 압축형) 전송은 app.py에서 수행(_send_cfg_if_serial)
+#
+# 구조 개요
+#   • SerialParams : 직렬 포트 관련 설정(수신 RX / 송신 TX)
+#   • SerialSource : SourceBase 구현체. read_frame() 호출마다
+#                    "S3 → S5 → Y2 → Y3 → YT" 5종 프레임을 순차적으로 반환.
+#                    (UI는 이 순서를 기대하므로, 하나의 DAT 프레임을 5조각으로 분해)
+#
+# 데이터 흐름(수신)
+#   SerialLine.read_frame()  →  parse_dat_frame()  →  deque에 5종 push  →  pop하여 반환
+#
+# 예외 처리
+#   • RX 포트 미설정/오픈 실패: self.rx=None → 빈 프레임 반환(루프 유지)
+#   • 파싱 오류(ValueError 등): 에러 로그만 찍고 빈 프레임 반환(루프 유지)
+#
+# 주의
+#   • parse_dat_frame() 규격은 serial_io.py의 프로토콜 주석에 고정됨
+#   • payload 길이 24, 메타 5 필드 고정. 불일치 시 ValueError
+#   • 여기서는 “표시 전용”: 계산/보정 없음. 형식 변환과 큐잉만 수행
 ###################################################################################
 
 @dataclass
 class SerialParams:
-    port: str = "COM11"       # 수신 포트(PCB>PC)
-    baud: int = 115200
-    tx_port: Optional[str] = None  # 송신 포트(PC>PCB) 필요 시
-    tx_baud: int = 115200
+    port: str = "COM11"            # 🔵 RX(수신)용 포트: PCB → PC 데이터 입력 (예: "COM11", "/dev/ttyUSB0")
+    baud: int = 115200             #    RX 보레이트
+    tx_port: Optional[str] = None  # 🔵 TX(송신)용 포트: PC → PCB 설정 프레임 전송 (필요 시 지정)
+    tx_baud: int = 115200          #    TX 보레이트
 
 class SerialSource(SourceBase):
     """
-    RS485/RS232 텍스트 프레임을 읽어 5종의 '파이프라인 프레임'으로
-    분해하여 순차적으로 반환합니다.
+    RS485/RS232 텍스트 프레임을 읽어 5종의 '파이프라인 프레임'으로 분할해 반환.
+
+    ▣ 한 번의 DAT 프레임(PCB→PC) → 내부적으로 다음 5개 프레임으로 쪼갬:
+       1) FT_STAGE3   : raw8  (원시 8채널)          → shape (1, 8)
+       2) FT_STAGE5   : ravg4 (R 도메인 4채널 평균) → shape (1, 4)
+       3) FT_STAGE7_Y2: y2    (보정1, 4채널)       → shape (1, 4)
+       4) FT_STAGE8_Y3: y3    (보정2, 4채널)       → shape (1, 4)
+       5) FT_YT       : yt    (최종 출력 4채널)    → shape (1, 4)
+
+    ▣ 반환 순서가 "S3→S5→Y2→Y3→YT" 인 이유:
+       - pipeline._run() 에서 YT 수신 시점을 "한 세트 완료"로 보고 묶어서 WS로 내보내기 위함.
+       - CProcSource/SyntheticSource 와 동일한 순서를 맞춰 UI 일관성 보장.
     """
+    
+    # 파이프라인 내 타입 상수(다른 소스들과 동일하게 맞춤)
     FT_STAGE3 = 0x01
     FT_STAGE5 = 0x02
     FT_YT     = 0x03
@@ -112,25 +146,36 @@ class SerialSource(SourceBase):
     FT_STAGE8_Y3 = 0x05
 
     def __init__(self, params: PipelineParams):
+        # 앱/파이프라인 전체 파라미터 보관
         self.params = params
+        
+        # params.serial 이 없으면 기본 SerialParams 삽입 (안전장치)
         sp = getattr(params, "serial", None)
         if sp is None:
             sp = SerialParams()
             params.serial = sp
 
-        # RX 포트가 없거나 "None"류면 수신 비활성화
+        # ---------- RX(수신) 포트 오픈 ----------
+        # • RX 포트가 비어있거나("None"/""/"null") 잘못된 경우 → self.rx=None로 두고 빈 프레임 반환 루틴 사용
         self.rx = None
         if sp.port and str(sp.port).strip().lower() not in ("none", "", "null"):
             try:
+                # SerialLine: 한 줄(st|...|end) 단위 프레임 추출기
                 self.rx = SerialLine(sp.port, sp.baud)
+                
             except Exception as e:
+                # 오픈 실패해도 전체 파이프라인이 죽지 않도록 로그만 남기고 비활성화
                 print(f"[SerialSource] RX open failed ({sp.port}): {e}", file=sys.stderr)
                 self.rx = None
 
-        # 5종 프레임을 순차 반환하기 위한 큐
+
+        # ---------- 프레임 출력 큐 ----------
+        # • 한 번 수신한 DAT 프레임을 5조각으로 분할해 순서대로 내보내기 위해 사용
         self.frame_queue = collections.deque()
 
-        # TX 포트는 옵션
+
+         # ---------- TX(송신) 포트 오픈(옵션) ----------
+        # • PC→PCB 설정 프레임 전송은 app.py의 _send_cfg_if_serial()에서 self.tx 사용
         self.tx = None
         if sp.tx_port and str(sp.tx_port).strip().lower() not in ("none", "", "null"):
             try:
@@ -140,6 +185,7 @@ class SerialSource(SourceBase):
                 self.tx = None
 
     def terminate(self):
+        """파이프라인 종료 시 포트 정리(에러는 조용히 무시)."""
         try: self.rx.close()
         except: pass
         try:
@@ -148,44 +194,54 @@ class SerialSource(SourceBase):
 
     def read_frame(self) -> Tuple[int, np.ndarray]:
         """
-        큐에 프레임이 있으면 먼저 반환.
-        없으면 시리얼에서 'st|...|end' 한 줄 읽어 5종(S3,S5,Y2,Y3,YT)으로 분해해
-        큐에 넣고, 첫 번째(S3)를 반환.
+        파이프라인 루프가 호출하는 단일 엔트리포인트.
+        • 큐(frame_queue)에 이전에 쌓아둔 프레임이 있으면 먼저 반환
+        • 없으면 RX로부터 'st|...|end' 한 줄을 읽어 parse_dat_frame()으로 파싱
+        • 결과(raw8, ravg4, y2, y3, yt)를 5조각으로 큐에 push한 뒤, 첫 조각(S3)을 반환
+
+        반환 형식: (ftype, arr)
+          - ftype: 위 타입 상수들 중 하나
+          - arr  : float32 2D, shape = (1, 채널수)
+                   (CProcSource/SyntheticSource와 동일 shape 유지)
         """
 
-        # 1) 큐에 남은 프레임 먼저 소진
+        # 1) 큐에 남은 프레임이 있으면 바로 반환 → 소비 후 다음 호출에서 또 pop
         if self.frame_queue:
             return self.frame_queue.popleft()
 
-        # 2) RX 비활성화면 아무 것도 읽을 수 없으므로 빈 프레임
+        # 2) RX 미오픈(=수신 비활성화)인 경우: 파이프라인은 살아있어야 하므로 '빈 프레임' 반환
         if self.rx is None:
-            time.sleep(0.01)
+            time.sleep(0.01)  # CPU 과점유 방지
             return self.FT_YT, np.empty((0, 4), dtype=np.float32)
 
-        # 3) 시리얼에서 한 줄 읽기
+        # 3) 한 줄(st|...|end) 읽기 (타임아웃이면 None)
         line = self.rx.read_frame()
 
-        # 4) 읽을 게 없으면(타임아웃 등) 빈 프레임
+        # 4) 읽을 게 없으면(타임아웃): 빈 프레임 반환
         if line is None:
             time.sleep(0.001)
             return self.FT_YT, np.empty((0, 4), dtype=np.float32)
 
         try:
-            # 5) 파싱 → meta, RAW8(8), RAVG4(4), Y2(4), Y3(4), YT(4)
+            # 5) 프로토콜 파싱
+            #    meta(dict), raw8(8), ravg4(4), y2(4), y3(4), yt(4)
             meta, raw8, ravg4, y2, y3, yt = parse_dat_frame(line)
         except Exception as e:
             print(f"[SerialSource] Parse error: {e}", file=sys.stderr)
-            # 파싱 실패 시에도 루프가 죽지 않도록 빈 프레임 반환
+            # 파싱 실패해도 파이프라인이 멈추면 안 됨 → 로그만 남기고 빈 프레임
             return self.FT_YT, np.empty((0, 4), dtype=np.float32)
 
-        # 6) CProcSource와 동일한 shape로 맞춤 (시간축=1, 채널축=n)
+
+        # 6) 소스 간 shape 통일:
+        #    - 시간축=1로 맞추고(한 줄 = 한 샘플 벡터), 채널축이 열 방향
         s3  = np.array([raw8],  dtype=np.float32)  # (1,8)
         s5  = np.array([ravg4], dtype=np.float32)  # (1,4)
         y2a = np.array([y2],    dtype=np.float32)  # (1,4)
         y3a = np.array([y3],    dtype=np.float32)  # (1,4)
         yta = np.array([yt],    dtype=np.float32)  # (1,4)
 
-        # 7) 파이프라인이 기대하는 순서로 큐에 적재: S3 → S5 → Y2 → Y3 → YT
+        # 7) “S3 → S5 → Y2 → Y3 → YT” 순으로 큐에 적재 후 첫 프레임 반환
+        #    - pipeline._run()는 YT가 들어와야 한 세트를 완성으로 인식하므로 이 순서 유지 필수
         self.frame_queue.append((self.FT_STAGE3,    s3))
         self.frame_queue.append((self.FT_STAGE5,    s5))
         self.frame_queue.append((self.FT_STAGE7_Y2, y2a))
