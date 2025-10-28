@@ -21,66 +21,10 @@
  * st|sid|ts|fs(kS/s)|blk(Input)|mask|RAW8[8],RAVG4[4],Y2/3/T[12]|end
  * ============================================================================
  */
-
- 
-//*******************************************************************************
-/*!!!!!!!!!!! 통신 프로토콜 관련 헷갈릴 수 있어서 다시 한 번 메모 남겨놓습니다 !!!!!!!!!!!*/
-//*******************************************************************************
-
-//                             PC -> PCB 
-//                         7 스칼라 + 4배열
-//              여기서 배열 간 구분은 | 구분자를 사용했습니다.
-// 예시)
-// st|2500|1000|1024|128|64|255|2048|1.0,-1.2,0.5,0.0,0.0,0.0|1.0,2.0,3.0,0.0,0.0,0.0|0.05,0.10,0.15,0.0,0.0,0.0|0.8,0.2|end              
-
-//                            ★진짜 중요★
-//                             PCB -> PC
-//                            5 메타 + (페이로드 총 24개) 
-//                   ☆★☆★배열 간 구분자가 없습니다☆★☆★ (아래 예시 참고)
-
-/*
-
-예시) 
-st|1234|1729145678123|1000|1024|0xFF|0.10,0.08,0.07,0.05,0.04,0.03,0.02,0.01,0.12,0.09,0.03,0.11,0.21,0.31,0.41,0.22,0.32,0.42,0.23,0.33,0.43,0.24,0.34,0.44|end
-
-
-(예시에 주석 넣어서 설명) 
-: 헷갈리니까 주석으로 # 해서 각 RAW8 , RAVG4 , ch1 , ch2 , ch3  표기 한 참고 예시 입니다.)
-
-st|1234|1729145678123|1000|1024|0xFF| <- 여긴 메타 5 
-
-
-↓ 페이로드 부분 : 구분자 | 없이 그냥 쭈욱 나열 입니다 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-# RAW8(8)
-0.10,0.08,0.07,0.05,0.04,0.03,0.02,0.01,
-
-# RAVG4(4)
-0.12,0.09,0.03,0.11,
-
-# ch0: y2,y3,yt
-0.21,0.31,0.41,
-
-# ch1: y2,y3,yt
-0.22,0.32,0.42,
-
-# ch2: y2,y3,yt
-0.23,0.33,0.43,
-
-# ch3: y2,y3,yt
-0.24,0.34,0.44|end
-
-*/
-
-
-
-
-
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "i2c.h"
-#include "rtc.h"
 #include "spi.h"
 #include "tim.h"
 #include "usart.h"
@@ -262,91 +206,7 @@ static inline double polyval_f64(const double* c, int len, double x);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-/**
- * @brief  현재 RTC 시각을 읽어오는 함수
- * @param  sTime: 시간을 저장할 구조체 포인터
- * @param  sDate: 날짜를 저장할 구조체 포인터
- * @retval None
- */
-void Get_Current_Time(RTC_TimeTypeDef *sTime, RTC_DateTypeDef *sDate)
-{
-    // 1. 시간 정보 가져오기
-    //    (RTC 핸들러 'hrtc'는 CubeMX가 'rtc.c'에 자동으로 생성해 줍니다)
-    HAL_RTC_GetTime(&hrtc, sTime, RTC_FORMAT_BIN);
 
-    // 2. 날짜 정보 가져오기
-    //    (GetTime을 먼저 호출 후 GetDate를 호출해야 정확한 날짜가 보장됩니다)
-    HAL_RTC_GetDate(&hrtc, sDate, RTC_FORMAT_BIN);
-}
-/**
- * @brief  RTC 현재 시각을 설정하는 함수
- * @note   이 함수는 VBAT 배터리가 없을 때 전원 인가 시 매번 호출하거나,
- * VBAT 배터리가 있을 경우 시간을 '초기화'하고 싶을 때 1회만 호출해야 합니다.
- * @param  Year: 0-99 (예: 25 -> 2025년)
- * @param  Month: 1-12
- * @param  Date: 1-31
- * @param  Hours: 0-23 (24시 형식)
- * @param  Minutes: 0-59
- * @param  Seconds: 0-59
- * @retval HAL_StatusTypeDef (HAL_OK, HAL_ERROR 등)
- */
-HAL_StatusTypeDef Set_Current_Time(uint8_t Year, uint8_t Month, uint8_t Date,
-                                   uint8_t Hours, uint8_t Minutes, uint8_t Seconds)
-{
-    RTC_TimeTypeDef sTime = {0};
-    RTC_DateTypeDef sDate = {0};
-    HAL_StatusTypeDef status_date, status_time;
-
-    // 1. 시간 설정
-    sTime.Hours = Hours;
-    sTime.Minutes = Minutes;
-    sTime.Seconds = Seconds;
-    sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE;
-    sTime.StoreOperation = RTC_STOREOPERATION_RESET;
-    // 시간을 2진수(Binary) 형식으로 설정
-    status_time = HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
-
-    if (status_time != HAL_OK)
-    {
-        return status_time; // 시간 설정 실패 시 에러 반환
-    }
-
-    // 2. 날짜 설정
-    //    (참고: 요일은 직접 지정해주어야 합니다)
-    sDate.Year = Year;   // 20xx년의 xx
-    sDate.Month = Month; // 1-12
-    sDate.Date = Date;   // 1-31
-
-    // (요일 예시: 2025년 10월 28일은 화요일입니다)
-    sDate.WeekDay = RTC_WEEKDAY_TUESDAY;
-
-    // 날짜를 2진수(Binary) 형식으로 설정
-    status_date = HAL_RTC_SetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
-
-    return status_date; // 날짜 설정 결과 반환 (HAL_OK, HAL_ERROR 등)
-}
-/**
- * @brief  현재 시각을 읽어와 시리얼 포트(예: USART2)로 출력하는 예시
- * @retval None
- */
-void Print_Current_Time(void)
-{
-    RTC_TimeTypeDef sTime = {0};
-    RTC_DateTypeDef sDate = {0};
-    char time_buffer[128];
-
-    // 위에서 만든 함수로 현재 시각 가져오기
-    Get_Current_Time(&sTime, &sDate);
-
-    // 2. 가져온 정보를 문자열로 변환
-    // (sDate.Year는 00~99 값이므로 2000을 더해줍니다)
-    sprintf(time_buffer, "Current Time: 20%02d-%02d-%02d %02d:%02d:%02d\r\n",
-            sDate.Year, sDate.Month, sDate.Date,
-            sTime.Hours, sTime.Minutes, sTime.Seconds);
-
-    // 3. 디버그용 UART 포트로 전송 (예: huart2)
-    HAL_UART_Transmit(&huart2, (uint8_t*)time_buffer, strlen(time_buffer), 100);
-}
 /* ==========================================================
  * SW_1 포팅: 헬퍼 함수
  * ========================================================== */
@@ -645,19 +505,7 @@ static void DSP_Parse_Settings(char* line)
  *
  * - 데이터 소스: g_latest_results[24] 전역 배열 (DSP_Process_Sample() 함수에서 채워짐)
  * - 출력 형식: 모든 float 값은 소수점 6자리(%.6f)로 포맷됩니다.
- * 
- * * ✅ [전송 예시] (실제 전송은 줄바꿈 없이 한 줄)
- * st|1234|51292|50.000|2048|255|0.10,0.08,0.07,0.05,0.04,0.03,0.02,0.01,0.12,0.09,0.03,0.11,0.21,0.31,0.41,0.22,0.32,0.42,0.23,0.33,0.43,0.24,0.34,0.44|end\r\n
-      * |    |     |      |    |   |                                                                                                                                    |
-      * |    |     |      |    |   +-- 페이로드 (RAW8, RAVG4, y2/3/t * 4) ---------------------------------------------------------------------+
-      * |    |     |      |    +------ 채널 마스크 (0xFF = 255 = 8ch)
-      * |    |     |      +----------- 블록 크기 (입력 설정값)
-      * |    |     +------------------ 샘플링 속도 (kS/s, 입력 설정값)
-      * |    +------------------------- 타임스탬프 (ms, HAL_GetTick)
-      * +------------------------------ 블록 카운터 (순번)
-      * 
  */
- 
 static void DSP_Send_Data_Frame(void)
 {
   /* --- 1. 메타데이터 5개 준비 --- */
@@ -710,13 +558,13 @@ static void DSP_Send_Data_Frame(void)
 
   for (int i = 0; i < 23; i++) {
     // 버퍼의 남은 공간(RDV2_TX_BUFSZ - n)에 문자열을 이어 붙임.
-      n += snprintf(g_tx_line + n, RDV2_TX_BUFSZ - n, "%.6f,", g_latest_results[i]);
+      n += snprintf(g_tx_line + n, RDV2_TX_BUFSZ - n, "%.3f,", g_latest_results[i]);
 
       // snprintf 오류 또는 버퍼 오버플로우 시 함수 종료
       if (n < 0 || n >= RDV2_TX_BUFSZ) return;
   }
   // 마지막 값(i=23) 뒤에는 콤마 대신 종료 구분자("|end\r\n")를 붙임.
-  n += snprintf(g_tx_line + n, RDV2_TX_BUFSZ - n, "%.6f|end\r\n", g_latest_results[23]);
+  n += snprintf(g_tx_line + n, RDV2_TX_BUFSZ - n, "%.3f|end\r\n", g_latest_results[23]);
 
   // snprintf 오류 또는 버퍼 오버플로우 시 함수 종료
   if (n < 0 || n >= RDV2_TX_BUFSZ) return;
@@ -776,7 +624,7 @@ int main(void)
   /* USER CODE END 1 */
 
   /* MPU Configuration--------------------------------------------------------*/
-  //MPU_Config();
+//  MPU_Config();
 
   /* MCU Configuration--------------------------------------------------------*/
 
@@ -805,7 +653,6 @@ int main(void)
   MX_FMC_Init();
   MX_TIM6_Init();
   MX_TIM7_Init();
-  MX_RTC_Init();
   /* USER CODE BEGIN 2 */
 
   /* ==== SW_1 DSP: 초기화 ==== */
@@ -846,28 +693,7 @@ int main(void)
   DSP_Reset_State();
   memset(g_latest_results, 0, sizeof(g_latest_results));
 
-  /* --- RTC 시간 초기 설정 (안전한 방법) --- */
-    HAL_Delay(100); // RTC가 안정화될 시간을 잠시 줍니다.
 
-    RTC_TimeTypeDef sTimeCheck = {0};
-    RTC_DateTypeDef sDateCheck = {0};
-
-    // 1. 현재 설정된 시간을 먼저 읽어옵니다.
-    HAL_RTC_GetTime(&hrtc, &sTimeCheck, RTC_FORMAT_BIN);
-    HAL_RTC_GetDate(&hrtc, &sDateCheck, RTC_FORMAT_BIN);
-
-    // 2. 날짜가 2020년 이전이면 (즉, 시간이 설정되지 않았다고 간주)
-    if (sDateCheck.Year < 20)
-    {
-        // 3. 현재 시간(예: 2025년 10월 28일 15시 16분 00초)으로 설정합니다.
-        //    (이 부분의 날짜와 시간을 실제 현재 시간으로 수정하세요)
-        Set_Current_Time(25, 10, 28, 15, 16, 00);
-
-        // (선택) 시간이 초기화되었다고 디버그 메시지 전송 (huart2 사용)
-        char msg[] = "RTC Time Initialized.\r\n";
-        HAL_UART_Transmit(&huart3, (uint8_t*)msg, strlen(msg), 100);
-    }
-    /* --- RTC 설정 완료 --- */
 
   HAL_UART_Receive_IT(&huart3, &g_rx_byte, 1); // UART 수신 시작
   ADC_Process_Init(); // AD7606 시작
@@ -881,12 +707,12 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  DSP_Process_Sample(); // ADC 샘플 처리
-	      if (g_send_flag) {
-	        g_send_flag = 0;
-	        DSP_Send_Data_Frame(); // 결과 전송
+     DSP_Process_Sample(); // ADC 샘플 처리
+         if (g_send_flag) {
+           g_send_flag = 0;
+           DSP_Send_Data_Frame(); // 결과 전송
 
-	      }
+         }
   }
   /* USER CODE END 3 */
 }
@@ -913,9 +739,8 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI|RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
-  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 1;

@@ -71,6 +71,9 @@ class SerialLine:
         # - 송신은 "한 줄"로 처리하는 게 안전/로그 편의에 좋다.
         # - 만약 줄 끝에 개행이 없다면 붙여 준다.
         if not text.endswith("\n"): text += "\n"
+        
+        print(f"[TX LOG] Sending: {text.strip()}") # 터미널 로그에서 PC -> PCB 전송 확인는 로그
+        
         self.ser.write(text.encode("utf-8"))    # 텍스트를 UTF-8 바이트로 변환하여 전송
         self.ser.flush()                        # OS/드라이버 버퍼로 즉시 밀어 넣기
 

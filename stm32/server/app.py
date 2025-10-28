@@ -486,6 +486,37 @@ def _build_cfg_line_with_validation(params) -> str:
         movavg_r, movavg_ch, channel_mask, block_size,
         coeffs_y1, coeffs_y2, coeffs_y3, coeffs_yt,
     )
+    
+    # --- >>>>>>>>>> 수정된 로그 출력 부분 시작 <<<<<<<<<< ---
+    print("\n" + "="*50)
+    print("  [TX LOG] Sending Configuration Frame (PC -> PCB)")
+    print("="*50)
+    print("  [Scalars (7)]")
+    print(f"    1. lpf_cutoff_hz : {lpf_cutoff_hz:.1f} Hz")
+    print(f"    2. sampling_rate : {sampling_rate_ksps:.3f} kS/s (Sent as kS/s)") # 전송 단위 명시
+    print(f"    3. target_rate   : {target_rate:.1f} Hz (Sent as Hz)") # 전송 단위 명시
+
+    # --- ▼▼▼ 이동 평균 로그 수정 ▼▼▼ ---
+    # movavg_r (샘플 수)에 해당하는 원본 시간(초) 값을 역산하여 함께 표시 (Target Rate 기준)
+    # (주의: round()로 인한 오차가 있을 수 있으므로 근사값 표시)
+    approx_movavg_r_sec = movavg_r / target_rate if target_rate > 0 else 0
+    print(f"    4. movavg_r      : {movavg_r} samples (≈ {approx_movavg_r_sec:.6f} sec)") # 샘플과 초 병기
+
+    # movavg_ch (샘플 수)에 해당하는 원본 시간(초) 값을 역산하여 함께 표시 (Sampling Rate 기준)
+    fs_hz = sampling_rate_ksps * 1000.0
+    approx_movavg_ch_sec = movavg_ch / fs_hz if fs_hz > 0 else 0
+    print(f"    5. movavg_ch     : {movavg_ch} samples (≈ {approx_movavg_ch_sec:.6f} sec)") # 샘플과 초 병기
+    # --- ▲▲▲ 이동 평균 로그 수정 ▲▲▲ ---
+
+    print(f"    6. channel_mask  : {channel_mask} (0x{channel_mask:X})")
+    print(f"    7. block_size    : {block_size} samples") # 단위 명시
+    print("  [Coefficients (20)]")
+    print(f"    8. coeffs_y1 (y1_den): {coeffs_y1}")
+    print(f"    9. coeffs_y2         : {coeffs_y2}")
+    print(f"   10. coeffs_y3         : {coeffs_y3}")
+    print(f"   11. coeffs_yt (E, F)  : {coeffs_yt}")
+    print("-"*50)
+    # --- >>>>>>>>>> 수정된 로그 출력 부분 끝 <<<<<<<<<< ---
 
 
     # 4) encode: 검증 통과 후 한 줄 프레임 생성

@@ -623,7 +623,15 @@ class Pipeline:
             elif ftype == CProcSource.FT_YT:
                 # 최종 4ch yt
                 series = [block[:, k].tolist() for k in range(min(4, n_ch))]
-                self._last_yt = {"names": self.params.label_names[:len(series)], "series": series}
+                
+                head_vals = [float(block[-1, k]) for k in range(min(4, n_ch))] if block.shape[0] else [float('nan')]*min(4, n_ch)
+                
+                self._last_yt = {
+                        "names": self.params.label_names[:len(series)],
+                        "series": series,
+                        "head": {f"yt{i}": head_vals[i] for i in range(len(head_vals))}
+                         }
+                
                 
                 
                 # 처리 통계 계산(블록당 처리 시간 기반)
