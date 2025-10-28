@@ -50,30 +50,84 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
-/* SW_1 DSP 파이프라인 파라미터 */
+/* ============================================================================
+ * DSP 파이프라인 설정 파라미터 구조체 (`g_params`)
+ * ============================================================================
+ * PC로부터 수신하는 '설정 프레임' (PC -> PCB)의 내용을 저장하고,
+ * DSP 파이프라인의 각 단계 연산 방식을 결정하는 변수 모음입니다.
+ *
+ * [통신 프로토콜 (PC -> PCB)]
+ * - 형식: st|{스칼라 7개}|{배열 4개}|end
+ * - 구분자: 필드 '|', 배열 내부 ','
+ * - 전체 값 개수: 27개 (스칼라 7 + 계수 20)
+ * - 필드 순서:
+ * 1. lpf_cutoff_hz (float, Hz)
+ * 2. sampling_rate (float, kS/s) -> 내부 Hz 변환 저장
+ * 3. target_rate (float, Hz)
+ * 4. movavg_r (int, 샘플 수)
+ * 5. movavg_ch (int, 샘플 수)
+ * 6. channel_mask (int/hex, 0~255)
+ * 7. block_size (int, 샘플 수)
+ * 8. coeffs_y1 (y1_den) (double[6], a5~a0)
+ * 9. coeffs_y2 (y2_coeffs) (double[6], b5~b0)
+ * 10. coeffs_y3 (y3_coeffs) (double[6], c5~c0)
+ * 11. coeffs_yt (E, F) (double[2])
+ *
+ * - 파싱 함수: DSP_Parse_Settings()
+ * - 수신된 프레임의 형식(토큰 개수) 및 각 배열의 길이(6, 6, 6, 2) 검증.
+ * - channel_mask는 10진수/16진수 자동 인식.
+ * - 검증 실패 시 설정 적용 안 함.
+ * - 검증 성공 시 g_params 업데이트 및 DSP_Reset_State() 호출.
+ * 
+ * 
+ * 예시 코드
+ * st|2500|1000|1024|128|64|255|2048|
+   1.0,-1.2,0.5,0.0,0.0,0.0|
+   1.0,2.0,3.0,0.0,0.0,0.0|
+   0.05,0.10,0.15,0.0,0.0,0.0|
+   0.8,0.2|end
+ * ============================================================================
+ */
+
+
 typedef struct {
   /* 스칼라 7개 */
-  float     lpf_cutoff_hz;        // 1. LPF 컷오프 (Hz)
-  float     sampling_rate;        // 2. HW 샘플레이트 (내부 저장 단위: Hz)
-  float     target_rate;          // 3. 출력 레이트 (Hz)
-  int       movavg_r;             // 4. Stage 5 MA 윈도우
-  int       movavg_ch;            // 5. Stage 2 MA 윈도우
-  int       channel_mask;         // 6. 채널 마스크 (int)
-  int       block_size;           // 7. 입력 블록 크기 (샘플 수)
+  /* --- 스칼라 7개 (PC -> PCB 수신 필드 1~7) --- */
+  float     lpf_cutoff_hz;        // 1. LPF 컷오프 주파수 (Hz). (현재 코드 LPF 고정으로 미사용, 정보용)
+  float     sampling_rate;        // 2. ADC 하드웨어 샘플링 속도 (수신: kS/s, 내부 저장/사용: Hz).
+  float     target_rate;          // 3. 최종 출력 데이터 속도 (수신/저장/사용: Hz).
+  int       movavg_r;             // 4. Stage 5 (Ravg) 이동평균 윈도우 크기 (샘플 수).
+  int       movavg_ch;            // 5. Stage 2 (Smoothing) 이동평균 윈도우 크기 (샘플 수).
+  int       channel_mask;         // 6. 채널 마스크 (0~255). (수신: int/hex, 내부 저장: int). PCB->PC 송신 시 사용.
+  int       block_size;           // 7. ADC 처리 블록 크기 (샘플 수). (샘플 기반 코드에서는 미사용, PCB->PC 송신 시 사용).
 
-  /* R 파라미터 */
-  double    alpha, beta, gamma, k, b;
-  int       r_abs;
+  
 
-  /* y-chain 계수 */
-  double    y1_den[6];      int y1_den_len;
-  double    y1_num[2];      int y1_num_len;
-  double    y2_coeffs[6];   int y2_coeffs_len;
-  double    y3_coeffs[6];   int y3_coeffs_len;
-  double    E, F;
+  /* --- R 파라미터 (Stage 4) --- */
+  // 이 값들은 현재 코드에서 PC로 설정받지 않고 내부 고정값으로 사용됩니다.
+  double    alpha, beta, gamma; // R 비례 상수 (현재 1.0 고정).
+  double    k;                  // R 로그 밑 (현재 10.0 고정).
+  double    b;                  // R 오프셋 (현재 0.0 고정).
+  int       r_abs;              // R 계산 시 절대값 사용 여부 (현재 1 고정).
 
-  /* 파생/내부 값 */
-  int       decim_rate;           // Fs(Hz) / Frate(Hz)
+
+  /* --- y-chain 계수 (PC -> PCB 수신 필드 8~11) --- */
+  // Stage 6 ~ 9 연산에 사용되는 다항식/선형 변환 계수. PC에서 설정 가능.
+  double    y1_den[6];          // 8. Stage 6: y1 분모 다항식 계수 (a5 ~ a0).
+  int       y1_den_len;         // y1_den 실제 길이 (파싱 후 항상 6으로 설정됨).
+  double    y1_num[2];          // Stage 6: y1 분자 다항식 계수 (1*r + 0). (내부 고정값).
+  int       y1_num_len;         // y1_num 실제 길이 (항상 2).
+  double    y2_coeffs[6];       // 9. Stage 7: y2 다항식 계수 (b5 ~ b0).
+  int       y2_coeffs_len;      // y2_coeffs 실제 길이 (파싱 후 항상 6으로 설정됨).
+  double    y3_coeffs[6];       // 10. Stage 8: y3 다항식 계수 (c5 ~ c0).
+  int       y3_coeffs_len;      // y3_coeffs 실제 길이 (파싱 후 항상 6으로 설정됨).
+  double    E, F;               // 11. Stage 9: yt 선형 변환 계수 (yt = E*y3 + F).
+
+
+
+  /* --- 파생/내부 값 --- */
+  // PC 설정값을 기반으로 계산되어 내부 로직에서 사용되는 값.
+  int       decim_rate;         // Stage 3: 시간 평균 비율 = sampling_rate(Hz) / target_rate(Hz).
 } dsp_params_t;
 
 
@@ -214,66 +268,136 @@ static void DSP_Reset_State(void) {
 /* DSP 메인 처리 루프 */
 static void DSP_Process_Sample(void)
 {
+    /* ========================================================== */
+    /* Stage 1: Raw Acquisition (8채널, ADC 샘플 1개)              */
+    /* ========================================================== */
+
+    // ADC_Process_IsDataReady(): ADC 변환 완료 여부 확인 (adc_process.c/.h 필요)
     if (!ADC_Process_IsDataReady()) return;
+
+    // ADC_Process_GetData(): ADC 결과(int16) 가져오기 (adc_process.c/.h 필요)
     int16_t raw_s16[N_CH];
     ADC_Process_GetData(raw_s16);
 
-    float lpf_out[N_CH];
+    float lpf_out[N_CH];  // Stage 2 결과를 담을 임시 버퍼
+
+    // R 계산에 필요한 상수 로딩 (가독성 및 최적화)
     const double r_inv_log_b = 1.0 / log(g_params.k > 1.0 ? g_params.k : 10.0);
     const double r_scale = g_params.alpha * g_params.beta * g_params.gamma;
 
-    /* Stage 2: LPF + Smoothing */
+    /* ========================================================== */
+    /* Stage 2: Noise Filter (LPF + Smoothing MA) (8채널)        */
+    /* ========================================================== */
+
+  
     for (int c = 0; c < N_CH; c++) {
+      // (1) Raw S16 -> F32 변환
         float x = (float)raw_s16[c];
+
+        // (2) Low Pass Filter (고정된 SOS 계수 사용)
+        // apply_lpf_sample(): sos_df2t_sample()을 내부적으로 호출하여 필터링
         x = apply_lpf_sample(c, x);
+
+        // (3) Smoothing (Channel Moving Average) (롤링 평균 방식)
+        // apply_rolling_average(): g_params.movavg_ch 윈도우 크기만큼 이동평균
         x = apply_rolling_average(x, g_params.movavg_ch, &g_state.ma_ch_pos[c], &g_state.ma_ch_sum[c], g_state.ma_ch_buf[c]);
-        lpf_out[c] = x;
+        lpf_out[c] = x;  // Stage 2 결과 저장
     }
 
-    /* Stage 3: Time Average (Accumulate) */
+    /* ========================================================== */
+    /* Stage 3: Time Average (시간 평균) (8채널)                   */
+    /* ========================================================== */
+     
+    // (1) Accumulate (샘플 누적)
     for (int c = 0; c < N_CH; c++) g_state.avg_buf[c] += (double)lpf_out[c];
     g_state.avg_count++;
+    
+    // (2) Check & Finalize (decim_rate 개수만큼 누적되었는지 확인)
+    // g_params.decim_rate = Fs(Hz) / Frate(Hz)
+    if (g_state.avg_count < g_params.decim_rate) return; // 아직 누적 중이면 함수 종료
 
-    if (g_state.avg_count < g_params.decim_rate) return; // 누적 중
-
-    /* Stage 3: Time Average (Finalize) */
-    float ta_out[N_CH];
+    // (3) Finalize (평균 계산)
+    float ta_out[N_CH];   // Stage 3 최종 결과를 담을 버퍼
     double avg_div = (double)g_state.avg_count;
     for (int c = 0; c < N_CH; c++) ta_out[c] = (float)(g_state.avg_buf[c] / avg_div);
+
+    // (4) Reset Accumulator (다음 평균을 위해 누적 변수 초기화)
     memset(g_state.avg_buf, 0, sizeof(g_state.avg_buf));
     g_state.avg_count = 0;
+
+    // (5) 결과 저장 (PCB->PC 전송용 버퍼의 RAW8 영역에 저장)
     memcpy(&g_latest_results[0], ta_out, sizeof(float) * N_CH); // RAW8 슬롯
 
-    float ravg_out[N_QUAD];
-    /* Stage 4-9 (Quad 0-3) */
-    for (int q = 0; q < N_QUAD; q++) {
-        const int si = sensor_idx[q], bi = standard_idx[q];
-        /* Stage 4: R */
-        double top = (double)ta_out[si], bot = (double)ta_out[bi];
+    float ravg_out[N_QUAD];  // Stage 5 결과를 담을 임시 버퍼
+
+
+    /* ========================================================== */
+    /* Stage 4 ~ 9: R 계산 및 y-chain 처리 (4채널 Quad)          */
+    /* ========================================================== */
+
+
+    for (int q = 0; q < N_QUAD; q++) {  // 4개의 Quad (0/1, 2/3, 4/5, 6/7 채널 쌍) 반복
+        const int si = sensor_idx[q],  // Sensor 채널 인덱스
+        bi = standard_idx[q];          // Standard 채널 인덱스
+
+
+        /* Stage 4: R (Log Ratio) 계산 */
+        double top = (double)ta_out[si], // 분자 (Sensor)
+         bot = (double)ta_out[bi];       // 분모 (Standard)
+
+         // 절대값 처리 (g_params.r_abs 설정에 따라)
         if (g_params.r_abs) { if (top < 0) top = -top; if (bot < 0) bot = -bot; }
+
+        // 0 또는 음수 방지 (log 계산 오류 방지)
         if (top < 1e-12) top = 1e-12; if (bot < 1e-12) bot = 1e-12;
+
+        // R = a * log_k(top/bot) + b
         const float R = (float)(r_scale * (log(top / bot) * r_inv_log_b) + g_params.b);
-        /* Stage 5: Ravg */
+
+
+        /* Stage 5: Ravg (Moving Average of R) (롤링 평균 방식) */
+        // apply_rolling_average(): g_params.movavg_r 윈도우 크기만큼 이동평균
         ravg_out[q] = apply_rolling_average(R, g_params.movavg_r, &g_state.ma_r_pos[q], &g_state.ma_r_sum[q], g_state.ma_r_buf[q]);
-        /* Stage 6: y1 */
-        const double r_t = (double)ravg_out[q];
-        const double y1n = polyval_f64(g_params.y1_num, g_params.y1_num_len, r_t);
-        const double y1d = polyval_f64(g_params.y1_den, g_params.y1_den_len, r_t);
+        
+        /* Stage 6: y1 = P(Ravg) / Q(Ravg) (분수 다항식) */
+        const double r_t = (double)ravg_out[q];  // Stage 5 결과 사용
+
+        // polyval_f64(): Horner 방식으로 다항식 계산
+        const double y1n = polyval_f64(g_params.y1_num, g_params.y1_num_len, r_t); // 분자 (고정: 1*r_t + 0)
+        const double y1d = polyval_f64(g_params.y1_den, g_params.y1_den_len, r_t); // 분모 (PC 설정값)
+        
+        // 0으로 나누기 방지
         const double y1  = y1n / ((fabs(y1d) < 1e-12) ? 1e-12 : y1d);
-        /* Stage 7: y2 */
+
+
+        /* Stage 7: y2 = poly(y1) (다항식) */
         const double y2  = polyval_f64(g_params.y2_coeffs, g_params.y2_coeffs_len, y1);
-        /* Stage 8: y3 */
+        
+        /* Stage 8: y3 = poly(y2) (다항식) */
         const double y3  = polyval_f64(g_params.y3_coeffs, g_params.y3_coeffs_len, y2);
-        /* Stage 9: yt */
+        
+        /* Stage 9: yt = E*y3 + F (선형 변환) */
         const double yt  = g_params.E * y3 + g_params.F;
-        /* Payload 저장 */
+
+
+        /* 결과 저장 (PCB->PC 전송용 버퍼의 y2, y3, yt 영역에 저장) */
+        // 채널 우선(Channel-major) 인덱싱: y2_0, y3_0, yt_0, y2_1, y3_1, yt_1, ...
         g_latest_results[12 + q*3 + 0] = (float)y2;
         g_latest_results[12 + q*3 + 1] = (float)y3;
         g_latest_results[12 + q*3 + 2] = (float)yt;
+
     }
+    // Stage 5 결과 저장 (PCB->PC 전송용 버퍼의 RAVG4 영역에 저장)
     memcpy(&g_latest_results[8], ravg_out, sizeof(float) * N_QUAD); // RAVG4 슬롯
+
+    /* ========================================================== */
+    /* Stage 10: Data Output (전송 플래그 설정)                   */
+    /* ========================================================== */
+
     g_send_flag = 1; // 전송 플래그
+                     // main() 루프에서 DSP_Send_Data_Frame()을 호출하도록 플래그 설정
 }
+
 
 /* ==========================================================
  * 수신 (PC -> PCB) (프로토콜 검증 강화)
@@ -348,19 +472,71 @@ static void DSP_Parse_Settings(char* line)
   // (선택) 성공 알림: HAL_UART_Transmit(&huart3, (uint8_t*)"ACK CFG OK\r\n", 12, 100);
 }
 
+
 /* ==========================================================
  * 송신 (PCB -> PC) (프로토콜 준수 확인)
- * ========================================================== */
+ * ==========================================================
+ * DSP 파이프라인 연산이 완료된 최종 결과(Stage 3, 5, 7, 8, 9)를
+ * PC로 전송하기 위한 프레임 문자열을 만들고 UART로 송신하는 함수입니다.
+ * DSP_Process_Sample() 함수에서 g_send_flag가 1로 설정되면 main() 루프에서 호출됩니다.
+ *
+ * [통신 프로토콜 (PCB -> PC)]
+ * - 형식: st|{메타 5개}|{페이로드 1개(float 24개)}|end (총 29개 데이터 값)
+ * - 구분자: 필드 '|', 페이로드 내부 ','
+ * - 전체 프레임은 개행 문자 없이 한 줄(\r\n으로 종료)로 전송됩니다.
+ *
+ * - 메타 5필드 (순서 고정):
+ * 1. block_count (uint32_t): 프레임 순번 카운터 (g_state.frame_sid)
+ * 2. timestamp_ms (uint64_t): 전송 시점 타임스탬프 (ms) (HAL_GetTick())
+ * 3. sampling_rate (float): *입력* 샘플링 속도 (kS/s) (g_params.sampling_rate / 1000.0f)
+ * 4. block_size (uint16_t): *입력* 블록 크기 (샘플 수) (g_params.block_size)
+ * 5. channel_mask (uint16_t): 활성 채널 마스크 (g_params.channel_mask)
+ *
+ * - 통합 페이로드 1필드 (float 24개, 순서 고정):
+ * - [0 ~ 7]: RAW8 (Stage 3 Time Average 결과 8채널)
+ * - [8 ~ 11]: RAVG4 (Stage 5 Ravg 결과 4채널)
+ * - [12 ~ 23]: 채널별 상세 결과 (y2, y3, yt 순서 반복 x 4채널 Quad)
+ * - [12~14]: y2_0, y3_0, yt_0 (Quad 0)
+ * - [15~17]: y2_1, y3_1, yt_1 (Quad 1)
+ * - [18~20]: y2_2, y3_2, yt_2 (Quad 2)
+ * - [21~23]: y2_3, y3_3, yt_3 (Quad 3)
+ *
+ * - 데이터 소스: g_latest_results[24] 전역 배열 (DSP_Process_Sample() 함수에서 채워짐)
+ * - 출력 형식: 모든 float 값은 소수점 6자리(%.6f)로 포맷됩니다.
+ */
 static void DSP_Send_Data_Frame(void)
 {
+  /* --- 1. 메타데이터 5개 준비 --- */
+  // 1.1. block_count: 전송 프레임 순번. g_state 구조체에서 관리하며, 전송 시마다 1씩 증가.
   const uint32_t block_count = g_state.frame_sid++;
+
+  // 1.2. timestamp_ms: 현재 시스템 시간(ms). HAL 라이브러리 함수 사용.
   const uint64_t timestamp_ms = rdv2_millis();
-  // [단위] 내부 Hz -> kS/s로 변환하여 전송
+
+
+  // 1.3. sampling_rate: PC에서 설정받은 *입력* 샘플링 속도(g_params.sampling_rate, Hz 단위)를
+  //     프로토콜 명세에 따라 kS/s 단위로 변환하여 사용.
   const float    sampling_rate_out_ksps = g_params.sampling_rate / 1000.0f;
+
+  // 1.4. block_size: PC에서 설정받은 *입력* 블록 크기(g_params.block_size) 사용.
   const uint16_t block_size_in = (uint16_t)g_params.block_size;
+
+  // 1.5. channel_mask: PC에서 설정받은 채널 마스크(g_params.channel_mask) 사용.
   const uint16_t channel_mask = (uint16_t)g_params.channel_mask;
 
-  /* 헤더(메타 5) 출력 */
+  /* --- 2. 프레임 문자열 생성 (snprintf 사용) --- */
+  // g_tx_line: 전송할 문자열을 담을 전역 버퍼 (크기: RDV2_TX_BUFSZ)
+  // n: 현재까지 버퍼에 쓰여진 문자열 길이 (버퍼 오버플로우 방지용)
+
+
+
+
+  /* 2.1. 헤더 생성: "st|메타5개|" */
+  // %lu: unsigned long (block_count)
+  // %llu: unsigned long long (timestamp_ms)
+  // %.3f: float 소수점 3자리 (sampling_rate_out_ksps)
+  // %u: unsigned int (block_size_in, channel_mask)
+
   int n = snprintf(g_tx_line, RDV2_TX_BUFSZ,
                    "st|%lu|%llu|%.3f|%u|%u|", // sampling_rate 소수점 3자리까지 (kS/s)
                    (unsigned long)block_count,
@@ -368,21 +544,47 @@ static void DSP_Send_Data_Frame(void)
                    sampling_rate_out_ksps, // kS/s 단위 전송
                    (unsigned)block_size_in,
                    (unsigned)channel_mask);
+
+
+  // snprintf 오류 또는 버퍼 오버플로우 시 함수 종료 (안전 코드)                 
   if (n < 0 || n >= RDV2_TX_BUFSZ) return;
 
-  /* 통합 페이로드 1필드 (24개 float) */
+
+  /* 2.2. 통합 페이로드 생성: "값1,값2,...,값24" */
+  // g_latest_results[24] 배열에 저장된 DSP 최종 결과값을 순서대로 문자열 변환.
+  // %.6f: float 소수점 6자리 형식 지정자.
+  // 마지막 값(i=22)까지는 값 뒤에 콤마(,)를 붙임.
+
   for (int i = 0; i < 23; i++) {
+    // 버퍼의 남은 공간(RDV2_TX_BUFSZ - n)에 문자열을 이어 붙임.
       n += snprintf(g_tx_line + n, RDV2_TX_BUFSZ - n, "%.6f,", g_latest_results[i]);
+
+      // snprintf 오류 또는 버퍼 오버플로우 시 함수 종료
       if (n < 0 || n >= RDV2_TX_BUFSZ) return;
   }
+  // 마지막 값(i=23) 뒤에는 콤마 대신 종료 구분자("|end\r\n")를 붙임.
   n += snprintf(g_tx_line + n, RDV2_TX_BUFSZ - n, "%.6f|end\r\n", g_latest_results[23]);
+
+  // snprintf 오류 또는 버퍼 오버플로우 시 함수 종료
   if (n < 0 || n >= RDV2_TX_BUFSZ) return;
 
-  /* 송신 */
+  /* --- 3. UART 송신 --- */
+
+  // 3.1. RS485 송신 모드 활성화 (DE 핀 HIGH)
   RDV2_DE_TX();
+
+
+  // 3.2. UART3를 통해 g_tx_line 버퍼의 내용을 n 바이트만큼 전송 (타임아웃 100ms)
+  // huart3: CubeMX에서 설정한 UART 핸들러 (실제 프로젝트에 맞게 확인 필요)
   HAL_UART_Transmit(&huart3, (uint8_t*)g_tx_line, (uint16_t)n, 100);
+
+
+  // 3.3. RS485 수신 모드 복귀 (DE 핀 LOW)
   RDV2_DE_RX();
 }
+
+
+
 /* USER CODE END 0 */
 
 /* ==== UART Rx 콜백 ==== */
