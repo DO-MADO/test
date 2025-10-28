@@ -4,6 +4,8 @@
         "string.h": "c",
         "FORSTM32_ver2.C": "cpp",
         "FORSTM32_ver2 copy.C": "cpp",
-        "FORSTM32_ver3.C": "cpp"
+        "FORSTM32_ver3.C": "cpp",
+        "FORSTM32_ver3 copy.C": "cpp",
+        "FORSTM32_ver4.C": "cpp"
     }
 }
