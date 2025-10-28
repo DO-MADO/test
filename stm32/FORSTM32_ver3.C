@@ -646,11 +646,29 @@ int main(void)
   g_params.block_size       = 2048; // 샘플 수
   g_params.alpha=1.0; g_params.beta=1.0; g_params.gamma=1.0; g_params.k=10.0; g_params.b=0.0; g_params.r_abs=1;
   g_params.y1_num[0]=1.0; g_params.y1_num[1]=0.0; g_params.y1_num_len=2;
-  g_params.y1_den[0] = 1.0; g_params.y1_den_len = 6;
-  g_params.y2_coeffs[0] = 1.0; g_params.y2_coeffs_len = 6;
-  g_params.y3_coeffs[0] = 1.0; g_params.y3_coeffs_len = 6;
+
+
+  /* --- y-chain 기본값을 항등식 계수로 수정 --- */
+
+  // coeffs_y1 (y1_den): 분모를 상수 1로 설정
+  g_params.y1_den[0] = 0.0; g_params.y1_den[1] = 0.0; g_params.y1_den[2] = 0.0;
+  g_params.y1_den[3] = 0.0; g_params.y1_den[4] = 0.0; g_params.y1_den[5] = 1.0;
+  g_params.y1_den_len = 6;
+
+  // coeffs_y2 (y2_coeffs): y2 = y1 이 되도록 설정
+  g_params.y2_coeffs[0] = 0.0; g_params.y2_coeffs[1] = 0.0; g_params.y2_coeffs[2] = 0.0;
+  g_params.y2_coeffs[3] = 0.0; g_params.y2_coeffs[4] = 1.0; g_params.y2_coeffs[5] = 0.0;
+  g_params.y2_coeffs_len = 6;
+
+  // coeffs_y3 (y3_coeffs): y3 = y2 가 되도록 설정
+  g_params.y3_coeffs[0] = 0.0; g_params.y3_coeffs[1] = 0.0; g_params.y3_coeffs[2] = 0.0;
+  g_params.y3_coeffs[3] = 0.0; g_params.y3_coeffs[4] = 1.0; g_params.y3_coeffs[5] = 0.0;
+  g_params.y3_coeffs_len = 6;
+
+  // coeffs_yt (E, F): yt = y3 가 되도록 설정 (기존과 동일)
   g_params.E = 1.0; g_params.F = 0.0;
 
+  
   DSP_Reset_State();
   memset(g_latest_results, 0, sizeof(g_latest_results));
 
