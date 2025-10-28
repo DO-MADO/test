@@ -511,7 +511,7 @@ static void DSP_Send_Data_Frame(void)
   const uint32_t block_count = g_state.frame_sid++;
 
   // 1.2. timestamp_ms: 현재 시스템 시간(ms). HAL 라이브러리 함수 사용.
-  const uint64_t timestamp_ms = rdv2_millis();
+  const uint32_t timestamp_ms = rdv2_millis();
 
 
   // 1.3. sampling_rate: PC에서 설정받은 *입력* 샘플링 속도(g_params.sampling_rate, Hz 단위)를
@@ -538,9 +538,9 @@ static void DSP_Send_Data_Frame(void)
   // %u: unsigned int (block_size_in, channel_mask)
 
   int n = snprintf(g_tx_line, RDV2_TX_BUFSZ,
-                   "st|%lu|%llu|%.3f|%u|%u|", // sampling_rate 소수점 3자리까지 (kS/s)
+                   "st|%lu|%lu|%.3f|%u|%u|", // sampling_rate 소수점 3자리까지 (kS/s)
                    (unsigned long)block_count,
-                   (unsigned long long)timestamp_ms,
+                   (unsigned long)timestamp_ms,
                    sampling_rate_out_ksps, // kS/s 단위 전송
                    (unsigned)block_size_in,
                    (unsigned)channel_mask);
