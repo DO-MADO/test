@@ -558,13 +558,13 @@ static void DSP_Send_Data_Frame(void)
 
   for (int i = 0; i < 23; i++) {
     // 버퍼의 남은 공간(RDV2_TX_BUFSZ - n)에 문자열을 이어 붙임.
-      n += snprintf(g_tx_line + n, RDV2_TX_BUFSZ - n, "%.3f,", g_latest_results[i]);
+      n += snprintf(g_tx_line + n, RDV2_TX_BUFSZ - n, "%.6f,", g_latest_results[i]);
 
       // snprintf 오류 또는 버퍼 오버플로우 시 함수 종료
       if (n < 0 || n >= RDV2_TX_BUFSZ) return;
   }
   // 마지막 값(i=23) 뒤에는 콤마 대신 종료 구분자("|end\r\n")를 붙임.
-  n += snprintf(g_tx_line + n, RDV2_TX_BUFSZ - n, "%.3f|end\r\n", g_latest_results[23]);
+  n += snprintf(g_tx_line + n, RDV2_TX_BUFSZ - n, "%.6f|end\r\n", g_latest_results[23]);
 
   // snprintf 오류 또는 버퍼 오버플로우 시 함수 종료
   if (n < 0 || n >= RDV2_TX_BUFSZ) return;

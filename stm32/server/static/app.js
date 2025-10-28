@@ -938,7 +938,7 @@ function updateYtValuesDisplay(latestValues) {
   // 배열의 각 값을 "yt0: 1.2345" 형태의 HTML 문자열로 변환
   const items = latestValues.map((v, i) => {
     // 값이 null이거나 유효하지 않으면 '---'로 표시, 아니면 소수점 4자리까지
-    const valueStr = v === null || v === undefined ? '---' : v.toFixed(4);
+    const valueStr = v === null || v === undefined ? '---' : v.toFixed(3);
     return `yt${i}: <span class="stat-value">${valueStr}</span>`;
   });
 
