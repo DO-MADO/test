@@ -2,6 +2,8 @@
     "files.associations": {
         "stdlib.h": "c",
         "string.h": "c",
-        "FORSTM32_ver2.C": "cpp"
+        "FORSTM32_ver2.C": "cpp",
+        "FORSTM32_ver2 copy.C": "cpp",
+        "FORSTM32_ver3.C": "cpp"
     }
 }
