@@ -447,15 +447,6 @@ for (;;) {
              //  PC 수신 시: frame.y_block[row][col] → ch0~ch7 Raw Data (~Stage3) 그래프에 반영
         }
 
-        // --- Output Stage3: I1..I4 pairs → 8ch (10 S/s 예시) ---
-        if (n_ta > 0) {
-            uint8_t ft = (uint8_t)FT_STAGE3_8CH;
-            block_hdr_t h3 = { (uint32_t)n_ta, (uint32_t)n_ch };
-            fwrite(&ft, 1, 1, stdout);
-            fwrite(&h3, sizeof(h3), 1, stdout);
-            fwrite(ta_out, sizeof(float), (size_t)n_ta * (size_t)n_ch, stdout);
-            fflush(stdout);
-        }
 
         if (n_ta > 0) {
             // (4)(5)(6)(7)(8)(9)
