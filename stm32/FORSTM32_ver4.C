@@ -138,6 +138,15 @@ typedef struct {
 #define SOS_SECTIONS 2
 #define MAX_MA_WIN 256
 
+
+// AD7606은 ±10V 입력 범위를 갖는 16비트 양극성 ADC이므로
+// int16 카운트를 실제 전압[V]로 환산하기 위한 스케일 팩터를 정의한다.
+// (32768 = 2^15, 양/음 대칭 풀스케일 카운트)
+#define AD7606_INPUT_RANGE_V   (10.0f)
+#define AD7606_COUNTS_FULLSCALE (32768.0f)
+#define AD7606_COUNTS_TO_V      (AD7606_INPUT_RANGE_V / AD7606_COUNTS_FULLSCALE)
+
+
 typedef struct {
   double    lpf_state[N_CH][SOS_SECTIONS * 2];
   float     ma_ch_buf[N_CH][MAX_MA_WIN];
@@ -188,8 +197,10 @@ static uint8_t  g_send_flag = 0;
 static const int sensor_idx[4]   = {0, 2, 4, 6};
 static const int standard_idx[4] = {1, 3, 5, 7};
 static const double SOS_COEFFS[SOS_SECTIONS][6] = {
-    {3.728052e-09, 7.456103e-09, 3.728052e-09, 1.0, -1.971149e+00, 9.713918e-01},
-    {1.0,          2.0,          1.0,          1.0, -1.987805e+00, 9.880500e-01},
+    /* Section 0 */
+    { 9.4717178309e-04, 1.8943435662e-03, 9.4717178309e-04, 1.0, -1.7348574313e+00, 7.6335193498e-01 },
+    /* Section 1 */
+    { 1.0000000000e+00, 2.0000000000e+00, 1.0000000000e+00, 1.0, -1.7820120288e+00, 8.2144638481e-01 }
 };
 /* USER CODE END PV */
 
@@ -293,8 +304,8 @@ static void DSP_Process_Sample(void)
 
 
     for (int c = 0; c < N_CH; c++) {
-      // (1) Raw S16 -> F32 변환
-        float x = (float)raw_s16[c];
+      // (1) Raw S16 -> 실제 전압[V] 변환 (±10V 풀스케일 기준)
+        float x = (float)raw_s16[c] * AD7606_COUNTS_TO_V;
 
         // (2) Low Pass Filter (고정된 SOS 계수 사용)
         // apply_lpf_sample(): sos_df2t_sample()을 내부적으로 호출하여 필터링
@@ -659,7 +670,7 @@ int main(void)
   memset(&g_params, 0, sizeof(dsp_params_t));
   // [단위] 내부 Hz 기준으로 초기화
   g_params.sampling_rate    = 50000.0f; // Hz
-  g_params.target_rate      = 10.0f;    // Hz
+  g_params.target_rate      = 5.0f;    // Hz
   g_params.decim_rate       = (int)(g_params.sampling_rate / g_params.target_rate + 0.5f);
   g_params.movavg_r         = 1;
   g_params.movavg_ch        = 1;

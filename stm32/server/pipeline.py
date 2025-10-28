@@ -448,11 +448,11 @@ class PipelineParams:
     exe_path: str = "iio_reader.exe" # C 실행 파일 경로
     ip: str = "192.168.1.133" # 장치 IP (제드보드 경로)
     block_samples: int = 16384 # 블록 크기
-    sampling_frequency: int = 100000 # 하드웨어 샘플레이트(Hz)
+    sampling_frequency: int = 50000 # 하드웨어 샘플레이트(Hz)
 
 
     # DSP 파라미터 (Configuration 탭 연동) ------------------
-    target_rate_hz: float = 10.0 # 타깃 출력 레이트(Hz)
+    target_rate_hz: float = 5.0 # 타깃 출력 레이트(Hz)
     lpf_cutoff_hz: float = 2500.0 # LPF 컷오프(Hz)
     movavg_ch: int = 1 # ❗ CH MA(Smoothing) 길이. 1이면 사실상 OFF.
     movavg_r: int = 5 # R moving avg 길이

@@ -619,7 +619,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["synthetic", "cproc", "serial"], default="cproc") # serial 추가
     parser.add_argument("--uri", type=str, default="192.168.1.133", help="device IP")
-    parser.add_argument("--fs", type=float, default=100000, help="ADC sampling frequency (Hz)")
+    parser.add_argument("--fs", type=float, default=50000, help="ADC sampling frequency (Hz)")
     parser.add_argument("--block", type=int, default=16384, help="Samples per block")
     parser.add_argument("--exe", type=str, default="iio_reader.exe", help="Path to C executable")
     parser.add_argument("--host", type=str, default="127.0.0.1")
@@ -646,7 +646,7 @@ if __name__ == "__main__":
         
         # DSP 관련 기본값은 dataclass 정의를 따름
         # 이 값들이 UI의 초기 슬라이더 위치를 결정
-        target_rate_hz=10.0,
+        target_rate_hz=5.0,
         lpf_cutoff_hz=2500.0,
         movavg_r=5,
         label_names=["yt0", "yt1", "yt2", "yt3"],
