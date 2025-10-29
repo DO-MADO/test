@@ -135,6 +135,7 @@ class ParamsIn(BaseModel):
     lpf_cutoff_hz: Optional[float] = None
     movavg_ch_sec: Optional[float] = None
     movavg_r_sec: Optional[float] = None
+    target_temp_c: Optional[float] = None # (신규) 목표 온도
 
 
 
@@ -466,6 +467,7 @@ def _build_cfg_line_with_validation(params) -> str:
     movavg_ch     = params.movavg_ch
     channel_mask  = 255  # 8채널 고정 시스템: 0xFF 권장(필요시 params에서 읽어도 됨)
     block_size    = params.block_samples
+    target_temp_c = params.target_temp_c # (신규) 목표 온도 읽기
 
 
     # 계수 alias (PipelineParams의 필드명 ↔ 프로토콜 명세 표기 통일)
@@ -491,7 +493,7 @@ def _build_cfg_line_with_validation(params) -> str:
     print("\n" + "="*50)
     print("  [TX LOG] Sending Configuration Frame (PC -> PCB)")
     print("="*50)
-    print("  [Scalars (7)]")
+    print("  [Scalars (8)]")
     print(f"    1. lpf_cutoff_hz : {lpf_cutoff_hz:.1f} Hz")
     print(f"    2. sampling_rate : {sampling_rate_ksps:.3f} kS/s (Sent as kS/s)") # 전송 단위 명시
     print(f"    3. target_rate   : {target_rate:.1f} Hz (Sent as Hz)") # 전송 단위 명시
@@ -510,11 +512,12 @@ def _build_cfg_line_with_validation(params) -> str:
 
     print(f"    6. channel_mask  : {channel_mask} (0x{channel_mask:X})")
     print(f"    7. block_size    : {block_size} samples") # 단위 명시
+    print(f"    8. target_temp_c : {target_temp_c:.1f} °C") # (신규) 8번 필드 로그
     print("  [Coefficients (20)]")
-    print(f"    8. coeffs_y1 (y1_den): {coeffs_y1}")
-    print(f"    9. coeffs_y2         : {coeffs_y2}")
-    print(f"   10. coeffs_y3         : {coeffs_y3}")
-    print(f"   11. coeffs_yt (E, F)  : {coeffs_yt}")
+    print(f"    9. coeffs_y1 (y1_den): {coeffs_y1}")
+    print(f"    10. coeffs_y2         : {coeffs_y2}")
+    print(f"   12. coeffs_y3         : {coeffs_y3}")
+    print(f"   12. coeffs_yt (E, F)  : {coeffs_yt}")
     print("-"*50)
     # --- >>>>>>>>>> 수정된 로그 출력 부분 끝 <<<<<<<<<< ---
 
@@ -528,6 +531,7 @@ def _build_cfg_line_with_validation(params) -> str:
         movavg_ch     = movavg_ch,             # 채널 평균 파라미터
         channel_mask  = channel_mask,          # 채널 마스크(8채널=255)
         block_size    = block_size,            # 블록 크기(samples)
+        target_temp_c = target_temp_c, # (신규) 인코딩 인자에 추가
         coeffs_y1     = coeffs_y1,             # y1 계수(6)
         coeffs_y2     = coeffs_y2,             # y2 계수(6)
         coeffs_y3     = coeffs_y3,             # y3 계수(6)

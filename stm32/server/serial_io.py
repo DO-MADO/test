@@ -111,12 +111,13 @@ class SerialLine:
 PC → PCB 설정 프레임은
 '|' 기준 11필드(스칼라 7 + 배열 4)로 구성된 고정 프레임 구조이며,
 각 배열 필드는 ',' 로 구분된 고정 길이 값(y1[6], y2[6], y3[6], yt[2])을 포함한다.
-전체 데이터 값 개수는 27개다
+전체 데이터 값 개수는 28개다 ( 온도 1개 추가 -10.29)
 """
 
 def validate_cfg_args(
     lpf_cutoff_hz, sampling_rate, target_rate,
     movavg_r, movavg_ch, channel_mask, block_size,
+    target_temp_c,
     coeffs_y1, coeffs_y2, coeffs_y3, coeffs_yt,
 ):
     """
@@ -146,6 +147,7 @@ def validate_cfg_args(
     _ = float(lpf_cutoff_hz); _ = float(sampling_rate); _ = float(target_rate)
     _ = int(movavg_r); _ = int(movavg_ch); _ = int(block_size)
     _ = int(channel_mask)   # 0~255 권장
+    _ = float(target_temp_c) # (신규) 온도 유효성 검사
     for arr in (coeffs_y1, coeffs_y2, coeffs_y3, coeffs_yt):
         for v in arr:
             _ = float(v)    # 각 계수가 숫자형으로 변환 가능한지 확인
@@ -168,6 +170,7 @@ def encode_cfg(
     movavg_ch: int,               # 채널 평균 파라미터(예: 창 길이/계수)
     channel_mask: int,            # 8채널 고정이면 255(0xFF). 비트마스크
     block_size: int,              # 처리/전송 블록 크기(샘플 개수 등)
+    target_temp_c: float,         # (신규) 목표 온도
     coeffs_y1: list[float],       # y1 계산 계수 6개
     coeffs_y2: list[float],       # y2 계산 계수 6개
     coeffs_y3: list[float],       # y3 계산 계수 6개
@@ -187,6 +190,7 @@ def encode_cfg(
         str(movavg_ch),            # 채널 평균
         str(channel_mask),         # 채널 마스크
         str(block_size),           # 블록 크기
+        str(target_temp_c),        # (신규) 8번째 스칼라 필드로 추가
         arr(coeffs_y1),            # y1 계수 6개를 콤마로 이어붙임
         arr(coeffs_y2),            # y2 계수 6개
         arr(coeffs_y3),            # y3 계수 6개
@@ -221,22 +225,22 @@ st|6970.0|550.0|1270.0|2413|192|255|25600|
 def parse_dat_frame(frame: str):
     """
         ─────────────────────────────────────────────
-        📡 PCB -> PC : 데이터(Data) 프레임 구조 예시
+        📡 PCB -> PC : 데이터(Data) 프레임 구조 예시 (수정: 30개 값) - 10. 29.
         ─────────────────────────────────────────────
 
         ▶ 프레임 개요
             • 하나의 프레임은 'st' 로 시작하고 'end' 로 끝난다.
             • 필드 구분자는 '|' (파이프)
             • 배열 내부 구분자는 ',' (콤마)
-            • 총 6필드 고정 (메타 5 + payload 1)
-                [block_count, timestamp_ms, sampling_rate, block_size, channel_mask, payload(24개)]
+            • 총 7필드 고정 (메타 5 + payload 1 + tempC 1)
+                [block_count, timestamp_ms, sampling_rate, block_size, channel_mask, payload(24개), current_tempC]
 
         ─────────────────────────────────────────────
         ▶ 데이터 구성
 
-        st|block_count|timestamp_ms|sampling_rate|block_size|channel_mask|payload(24)|end
-            ↑              ↑             ↑             ↑            ↑             ↑
-        (1) 블록번호   (2) 타임스탬프  (3) 샘플레이트 (4) 블록크기  (5) 활성채널  (6) 데이터(24개)
+        st|block_count|timestamp_ms|sampling_rate|block_size|channel_mask|payload(24)|current_tempC|end
+            ↑              ↑             ↑             ↑            ↑             ↑            ↑
+        (1) 블록번호   (2) 타임스탬프  (3) 샘플레이트 (4) 블록크기  (5) 활성채널  (6) 데이터(24개)  (7) 현재온도
 
         ─────────────────────────────────────────────
         ▶ payload(24) 내부 구조 (고정 길이)
@@ -266,10 +270,10 @@ def parse_dat_frame(frame: str):
 
         ─────────────────────────────────────────────
         ▶ 구조 요약
-            • 파이프 필드 수: 6
-                (st / 5 메타 / 1 페이로드 / end)
+            • 파이프 필드 수: 7
+                (st / 5 메타 / 1 페이로드 / 1 온도 / end)
             • payload 내부 길이: 24 (고정)
-            • 총 데이터 값 수: 24 + 5 = 29개 (단, st/end 제외)
+            • 총 데이터 값 수: 24 + 5 + 1 = 30개 (단, st/end 제외)
             • st, end 는 프레임 제어 토큰으로 데이터에 포함되지 않음
         ─────────────────────────────────────────────
     """
@@ -283,12 +287,12 @@ def parse_dat_frame(frame: str):
     core = frame[3:-4]  # 'st|'와 '|end' 제거
     
     
-    # 3) 필드 쪼개기: '|' 기준으로 총 6개여야 정상
+    # 3) 필드 쪼개기: '|' 기준으로 총 7개여야 정상 (수정: 6 -> 7)
     parts = core.split(SEP)
-    if len(parts) != 6:   # 메타5 + payload1 = 6, (이미 'st' 제거됨)
+    if len(parts) != 7:   # 메타5 + payload1 + tempC1 = 7
         # parts=[block_count,timestamp_ms,sampling_rate,block_size,channel_mask,payload]
         # 총 6여야 정상. (위에서 3:-4 했으니 'st'와 'end'는 없음)
-        raise ValueError(f"Invalid DAT fields: expected 6, got {len(parts)}")
+        raise ValueError(f"Invalid DAT fields: expected 7, got {len(parts)}")
 
 
     # 4) 메타 필드 파싱/형변환
@@ -298,6 +302,7 @@ def parse_dat_frame(frame: str):
     block_size     = int(parts[3])
     channel_mask   = parts[4]   # 문자열 그대로 둠(호출부에서 필요 시 int(...) 처리)
     payload_str    = parts[5]
+    tempC_str      = parts[6]
 
 
     # 5) payload 파싱: 콤마로 나누어 float로 변환. 빈 항목은 제외
@@ -305,6 +310,11 @@ def parse_dat_frame(frame: str):
     if len(payload) != 24:
         # 길이가 다르면 프로토콜 불일치 → 즉시 예외로 알려 문제를 빠르게 발견
         raise ValueError(f"Payload length must be 24, got {len(payload)}")
+    
+    
+    # (신규) 현재 온도 파싱
+    current_tempC  = float(tempC_str)
+
 
 
     # 6) 채널우선 인덱싱 분해 (의미대로 잘라서 사용하기 편하게)
@@ -325,14 +335,17 @@ def parse_dat_frame(frame: str):
     yt4       = [ch0_yt, ch1_yt, ch2_yt, ch3_yt]
 
 
-    # 7) 메타 + 분해된 배열들을 튜플로 반환
+    # 7) 메타 + 분해된 배열들을 튜플로 반환 + (신규) 온도를 튜플로 반환
     meta = dict(
         block_count=block_count,
         timestamp_ms=timestamp_ms,
         sampling_rate=sampling_rate,
         block_size=block_size,
         channel_mask=channel_mask,
+        
+        
     )
-    return meta, raw8, ravg4, stage7_y2, stage8_y3, yt4
+    # (수정) 반환값에 current_tempC 추가
+    return meta, raw8, ravg4, stage7_y2, stage8_y3, yt4, current_tempC
 
 

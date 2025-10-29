@@ -172,6 +172,10 @@ class SerialSource(SourceBase):
         # ---------- 프레임 출력 큐 ----------
         # • 한 번 수신한 DAT 프레임을 5조각으로 분할해 순서대로 내보내기 위해 사용
         self.frame_queue = collections.deque()
+        
+        
+        # (신규) 마지막으로 수신된 현재 온도를 저장할 변수
+        self.last_tempC = -999.0
 
 
          # ---------- TX(송신) 포트 오픈(옵션) ----------
@@ -225,7 +229,11 @@ class SerialSource(SourceBase):
         try:
             # 5) 프로토콜 파싱
             #    meta(dict), raw8(8), ravg4(4), y2(4), y3(4), yt(4)
-            meta, raw8, ravg4, y2, y3, yt = parse_dat_frame(line)
+            meta, raw8, ravg4, y2, y3, yt, tempC = parse_dat_frame(line)
+            
+            # (신규) 수신된 현재 온도를 인스턴스 변수에 저장
+            self.last_tempC = tempC
+            
         except Exception as e:
             print(f"[SerialSource] Parse error: {e}", file=sys.stderr)
             # 파싱 실패해도 파이프라인이 멈추면 안 됨 → 로그만 남기고 빈 프레임
@@ -456,6 +464,7 @@ class PipelineParams:
     lpf_cutoff_hz: float = 2500.0 # LPF 컷오프(Hz)
     movavg_ch: int = 1 # ❗ CH MA(Smoothing) 길이. 1이면 사실상 OFF.
     movavg_r: int = 5 # R moving avg 길이
+    target_temp_c: float = 25.0 # (신규) 목표 온도 기본값 25.0℃
     
     # UI/메타 데이터 ----------------------------------------
     label_names: List[str] = field(default_factory=lambda: ["yt0", "yt1", "yt2", "yt3"]) # 4ch 라벨
@@ -533,8 +542,12 @@ class Pipeline:
         → C stdin으로 "y1_den v1,v2,v3,..." 형태로 전송
         """
         
-        # 1) 파이썬 파라미터에도 동기화 (UI 반영/상태 보존)
-        if hasattr(self.params, key):
+        # 1) 파이썬 파라미터에도 동기화
+        # (수정) target_temp_c는 float이므로 values[0]을 사용
+        if key == 'target_temp_c':
+            if values:
+                self.params.target_temp_c = float(values[0])
+        elif hasattr(self.params, key):
             setattr(self.params, key, values)
         elif key == 'yt_coeffs' and len(values) == 2:
             self.params.E = values[0]
@@ -625,6 +638,11 @@ class Pipeline:
                 series = [block[:, k].tolist() for k in range(min(4, n_ch))]
                 self._last_yt = {"names": self.params.label_names[:len(series)], "series": series}
                 
+                # (신규) 현재 소스가 SerialSource이면, 마지막 수신 온도 가져오기
+                current_tempC = -999.0 # 기본값
+                if isinstance(self.src, SerialSource): # SerialSource 임포트 이름 확인
+                    current_tempC = self.src.last_tempC
+                
                 
                 # 처리 통계 계산(블록당 처리 시간 기반)
                 stats = None
@@ -656,6 +674,7 @@ class Pipeline:
                         "stage8_y3": self._last_y3,
                         "derived": self._last_yt,   # 최종 yt
                         "stats": self._last_stats,  # 처리량/속도 지표
+                        "current_tempC": current_tempC,  # (신규) 현재 온도 페이로드에 추가
                     }
                     
                     # app.py의 WebSocket 루프가 사용할 수 있도록 텍스트(JSON)로 큐에 삽입

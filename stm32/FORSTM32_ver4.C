@@ -100,7 +100,8 @@ typedef struct {
   int       movavg_r;             // 4. Stage 5 (Ravg) 이동평균 윈도우 크기 (샘플 수).
   int       movavg_ch;            // 5. Stage 2 (Smoothing) 이동평균 윈도우 크기 (샘플 수).
   int       channel_mask;         // 6. 채널 마스크 (0~255). (수신: int/hex, 내부 저장: int). PCB->PC 송신 시 사용.
-  int       block_size;           // 7. ADC 처리 블록 크기 (샘플 수). (샘플 기반 코드에서는 미사용, PCB->PC 송신 시 사용).
+  int       block_size;           // 7. ADC 처리 블록 크기 (샘플 수). (샘플 기반 코드에서는 미사용, PCB->PC 송신 시 사용)
+  float     target_temp_c;        // 8. **신규 : 목표 온도온도(°C). PC가 안 보내면 디폴트 유지
 
 
 
@@ -194,6 +195,7 @@ static uint16_t g_rx_len = 0;
 static char     g_tx_line[RDV2_TX_BUFSZ];
 static float    g_latest_results[24];
 static uint8_t  g_send_flag = 0;
+static float    g_tempC = -999.0f;     // 최신 실제 온도(°C)
 static const int sensor_idx[4]   = {0, 2, 4, 6};
 static const int standard_idx[4] = {1, 3, 5, 7};
 static const double SOS_COEFFS[SOS_SECTIONS][6] = {
@@ -215,6 +217,42 @@ static inline double polyval_f64(const double* c, int len, double x);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+
+/* ==========================================================
+ * [신규] 온도 관련
+ * ========================================================== */
+
+/* ---- 온도(°C) 계산: NTC 분압 → °C (B-파라미터 근사) ---- */
+static float ntc_voltage_to_celsius(float v_div, float v_ref, float r_fixed_ohm)
+{
+  if (v_div <= 0.0f) v_div = 1e-6f;
+  if (v_div >= v_ref) v_div = v_ref - 1e-6f;
+  const float r_ntc = r_fixed_ohm * (v_div / (v_ref - v_div));
+
+  const float B   = 3988.0f;   // B57703M703
+  const float R25 = 10000.0f;  // 10k @25°C
+  const float T0K = 273.15f + 25.0f;
+
+  const float invT = (1.0f/T0K) + (1.0f/B) * logf(r_ntc / R25);
+  return (1.0f/invT) - 273.15f;
+}
+
+/* 현재 온도 갱신(예: ADS1115 0번 채널에서 분압 읽기) */
+static void Update_Current_Temperature(void)
+{
+  // TODO: 프로젝트에 맞게 실제 읽기 함수로 교체
+  // float v_div = ADS1115_ReadVoltage(0);   // [V]
+  float v_div = 1.000f;                      // 임시 값 (테스트용)
+
+  const float v_ref   = 3.300f;              // 분압 기준 전압
+  const float r_fixed = 10000.0f;            // 분압 저항(직렬)
+
+  g_tempC = ntc_voltage_to_celsius(v_div, v_ref, r_fixed);
+}
+
+
+
 
 /* ==========================================================
  * SW_1 포팅: 헬퍼 함수
@@ -421,9 +459,11 @@ static void DSP_Parse_Settings(char* line)
   char *p = strtok(line, "|");
   while (p && ntok < 32) { tok[ntok++] = p; p = strtok(NULL, "|"); }
 
-  if (ntok != 13 || strcmp(tok[0], "st") != 0 || strcmp(tok[ntok - 1], "end") != 0) {
-      // (선택) 오류 알림: HAL_UART_Transmit(&huart3, (uint8_t*)"NACK CFG FMT\r\n", 14, 100);
-      return; // 필드 개수 또는 시작/끝 토큰 불일치
+  // 허용 토큰 수:
+  //  - 레거시(스칼라7 + 배열4) = 13
+  //  - 신규(스칼라8 + 배열4)   = 14
+  if ((ntok != 13 && ntok != 14) || strcmp(tok[0], "st") != 0 || strcmp(tok[ntok - 1], "end") != 0) {
+    return;
   }
 
   // 임시 파라미터 구조체 (검증 성공 시 g_params로 복사)
@@ -441,12 +481,23 @@ static void DSP_Parse_Settings(char* line)
   np.channel_mask     = (int)strtol(tok[6], NULL, 0);
   np.block_size       = (int)strtol(tok[7], NULL, 10);
 
+ int arr_base = 8; // 배열 시작 인덱스 (레거시 기준)
+ /* 스칼라 #8: target_temp_c (신규) */
+ if (ntok == 14) {               // 신규 프레임이면
+    np.target_temp_c = (float)strtof(tok[8], NULL);
+    arr_base = 9;                 // 배열 시작 위치 1칸 뒤로
+  }
+ // 레거시(13토큰)의 경우 np.target_temp_c는 기존값 유지
+
+
+
   /* 계수(배열) 4묶음 파싱 및 길이 검증 */
   double yt_tmp[2]; int y1d_n, y2c_n, y3c_n, yt_n;
-  parse_csv_vec(tok[8],  np.y1_den,      6, &y1d_n);
-  parse_csv_vec(tok[9],  np.y2_coeffs,   6, &y2c_n);
-  parse_csv_vec(tok[10], np.y3_coeffs,   6, &y3c_n);
-  parse_csv_vec(tok[11], yt_tmp,         2, &yt_n);
+  parse_csv_vec(tok[arr_base+0],  np.y1_den,      6, &y1d_n);
+  parse_csv_vec(tok[arr_base+1],  np.y2_coeffs,   6, &y2c_n);
+  parse_csv_vec(tok[arr_base+2],  np.y3_coeffs,   6, &y3c_n);
+  parse_csv_vec(tok[arr_base+3],  yt_tmp,         2, &yt_n);
+
 
   // [검증] 각 배열의 길이가 정확히 맞는지 확인
   if (y1d_n != 6 || y2c_n != 6 || y3c_n != 6 || yt_n != 2) {
@@ -481,6 +532,16 @@ static void DSP_Parse_Settings(char* line)
   g_params = np;
   DSP_Reset_State(); // 상태 리셋
   // (선택) 성공 알림: HAL_UART_Transmit(&huart3, (uint8_t*)"ACK CFG OK\r\n", 12, 100);
+
+
+  // ▼▼▼ [이곳에 온도 관련 목표값 설정 후 실제 작동하는 로직을 위해서 필요] ▼▼▼
+  // PC에서 받은 목표 온도를 실제 온도 컨트롤러에 적용합니다.
+  // (함수 이름은 temp_controller.h에 정의된 것을 사용해야 합니다)
+  // 예시: 
+  // TempController_SetTarget(g_params.target_temp_c); 
+  // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+
+
 }
 
 
@@ -547,13 +608,14 @@ static void DSP_Send_Data_Frame(void)
   // %.3f: float 소수점 3자리 (sampling_rate_out_ksps)
   // %u: unsigned int (block_size_in, channel_mask)
 
+
   int n = snprintf(g_tx_line, RDV2_TX_BUFSZ,
-                    "st|%lu|%lu|%.3f|%u|%u|", // sampling_rate 소수점 3자리까지 (kS/s)
-                    (unsigned long)block_count,
-                    (unsigned long)timestamp_ms,
-                    sampling_rate_out_ksps, // kS/s 단위 전송
-                    (unsigned)block_size_in,
-                    (unsigned)channel_mask);
+                   "st|%lu|%lu|%.3f|%u|%u|",  // sampling_rate 소수점 3자리까지 (kS/s)
+                   (unsigned long)block_count,
+                   (unsigned long)timestamp_ms,
+                   sampling_rate_out_ksps,  // kS/s 단위 전송 
+                   (unsigned)block_size_in,
+                   (unsigned)channel_mask);                  
 
 
   // snprintf 오류 또는 버퍼 오버플로우 시 함수 종료 (안전 코드)
@@ -572,11 +634,17 @@ static void DSP_Send_Data_Frame(void)
       // snprintf 오류 또는 버퍼 오버플로우 시 함수 종료
       if (n < 0 || n >= RDV2_TX_BUFSZ) return;
   }
-  // 마지막 값(i=23) 뒤에는 콤마 대신 종료 구분자("|end\r\n")를 붙임.
-  n += snprintf(g_tx_line + n, RDV2_TX_BUFSZ - n, "%.6f|end\r\n", g_latest_results[23]);
+
+  // 마지막 값(23)까지 페이로드를 마무리
+  n += snprintf(g_tx_line + n, RDV2_TX_BUFSZ - n, "%.6f|", g_latest_results[23]);
+  if (n < 0 || n >= RDV2_TX_BUFSZ) return;
+
+  // ---- 신규 필드: 실제 온도(°C) 추가 ----
+  n += snprintf(g_tx_line + n, RDV2_TX_BUFSZ - n, "%.2f|end\r\n", g_tempC);
 
   // snprintf 오류 또는 버퍼 오버플로우 시 함수 종료
   if (n < 0 || n >= RDV2_TX_BUFSZ) return;
+
 
   /* --- 3. UART 송신 --- */
 
@@ -674,6 +742,8 @@ int main(void)
   g_params.movavg_ch        = 1;
   g_params.channel_mask     = 0xFF;
   g_params.block_size       = 2048; // 샘플 수
+  g_params.target_temp_c    = -1.0f;   // 미설정(비활성) 디폴트 표기
+
   g_params.alpha=1.0; g_params.beta=1.0; g_params.gamma=1.0; g_params.k=10.0; g_params.b=0.0; g_params.r_abs=1;
   g_params.y1_num[0]=1.0; g_params.y1_num[1]=0.0; g_params.y1_num_len=2;
 
@@ -719,7 +789,8 @@ int main(void)
      DSP_Process_Sample(); // ADC 샘플 처리
          if (g_send_flag) {
            g_send_flag = 0;
-           DSP_Send_Data_Frame(); // 결과 전송
+           Update_Current_Temperature();  // <- 온도 전송 추가 (전송 직전 최신 온도 읽기) 
+           DSP_Send_Data_Frame(); // 결과 전송 + tempC 전송 추가
 
          }
   }
