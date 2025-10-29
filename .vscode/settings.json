@@ -4,6 +4,8 @@
         "FORSTM32_ver3.C": "cpp",
         "FORSTM32_ver5.C": "cpp",
         "FORSTM32_ver6.C": "cpp",
-        "*.c(윤이사님오기전)": "cpp"
+        "*.c(윤이사님오기전)": "cpp",
+        "FORSTM32_ver6 copy.C": "cpp",
+        "forstm32_ver7(ver6상태에서 데이터 레이스 문제 작업)c": "cpp"
     }
 }

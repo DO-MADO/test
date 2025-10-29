@@ -225,6 +225,13 @@ static uint32_t g_last_send_time = 0; // 마지막으로 전송한 시간 (ms)
 // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
 
+// ▼▼▼▼▼ [수정] 데이터 레이스 해결을 위해 아래 2줄 추가 ▼▼▼▼▼
+// volatile: 인터럽트와 메인 루프가 함께 사용하므로 최적화 방지
+volatile uint8_t  g_settings_flag = 0; 
+static char       g_settings_buf[RDV2_RX_BUFSZ]; // 파싱 전용 안전 버퍼
+// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+
+
 static float    g_tempC = -999.0f;     // 최신 실제 온도(°C)
 static const int sensor_idx[4]   = {0, 2, 4, 6};
 static const int standard_idx[4] = {1, 3, 5, 7};
@@ -763,15 +770,24 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
         else break;
       }
 
-      // 3) 새 파서 호출 (설정 프레임 반영)
-      DSP_Parse_Settings(line_buf);
+      // ▼▼▼▼▼ [수정] 파서 직접 호출 대신 깃발 세우기 ▼▼▼▼▼
+      // 3) 새 파서 호출 (설정 프레임 반영) <-- (제거)
+      // DSP_Parse_Settings(line_buf); // <--- 이 줄을 주석 처리하거나 삭제합니다.
+      
+      // 3) 메인 루프가 처리하도록 버퍼에 복사하고 깃발(Flag) 설정
+      if (g_settings_flag == 0) { // 이전 프레임 처리가 끝났을 때만 복사
+          strncpy(g_settings_buf, line_buf, RDV2_RX_BUFSZ - 1);
+          g_settings_buf[RDV2_RX_BUFSZ - 1] = '\0'; // 안전하게 널 종료
+          g_settings_flag = 1; // 깃발 올리기!
+      }
+      // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
-      // 4) 입력 버퍼 리셋
+      // 4) 입력 버퍼 리셋 (기존과 동일)
       g_rx_len = 0;
       g_rx_line[0] = '\0';
     }
 
-    // 5) 다음 바이트 재개
+    // 5) 다음 바이트 재개 (기존과 동일)
     HAL_UART_Receive_IT(&huart3, &g_rx_byte, 1);
   }
 }
@@ -888,6 +904,16 @@ int main(void)
      RDV2_DE_RX();       // RS485 수신 모드  // While 문안에 <-- 이걸 넣었음!!!!!!-10. 29.
 
     /* USER CODE BEGIN 3 */
+
+    // ▼▼▼▼▼ [수정] 깃발(Flag) 확인 로직 추가 ▼▼▼▼▼
+    if (g_settings_flag) {
+        
+        g_settings_flag = 0; // 1. 깃발을 먼저 내립니다.
+        
+        // 2. 파싱 및 적용을 "메인 루프"에서 안전하게 실행
+        DSP_Parse_Settings(g_settings_buf); 
+    }
+    // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
      DSP_Process_Sample(); // ADC 샘플 처리
 
          if (g_send_flag) {   // 1. DSP 처리가 끝나서 새 데이터가 준비되면
@@ -906,7 +932,7 @@ int main(void)
            }
            // (만약 100ms가 안 지났다면, 전송을 "건너뛰고" 루프가 계속 돕니다.)
      }
-  }  
+  } 
   /* USER CODE END 3 */
 }
 
