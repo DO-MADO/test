@@ -88,6 +88,14 @@ const blockSizeNum = document.getElementById('block_size_num'); // 블록 크기
 
 const statsDisplay = document.getElementById('statsDisplay');
 
+
+// --- Temperature 컨트롤 ---
+const targetTempInput = document.getElementById('targetTempInput');
+const targetTempSendBtn = document.getElementById('targetTempSendBtn');
+const currentTempDisplay = document.getElementById('currentTempDisplay');
+let lastCurrentTemp = null;
+
+
 // [추가] Raw Data 상세 보기 모드용 DOM
 const rawViewBothBtn = document.getElementById('rawViewBothBtn');
 const rawViewS3Btn = document.getElementById('rawViewS3Btn');
@@ -654,6 +662,65 @@ function trimZeros(s) {
   return String(parseFloat(s));
 }
 
+function updateCurrentTemperature(tempC) {
+  if (!currentTempDisplay) return;
+
+  if (!Number.isFinite(tempC) || tempC <= -200) {
+    currentTempDisplay.textContent = '--.- ℃';
+    currentTempDisplay.classList.add('muted');
+    lastCurrentTemp = null;
+    return;
+  }
+
+  const formatted = tempC.toFixed(1);
+  currentTempDisplay.textContent = `${formatted} ℃`;
+  currentTempDisplay.classList.remove('muted');
+  lastCurrentTemp = tempC;
+}
+
+async function submitTargetTemperature() {
+  if (!targetTempInput) return;
+
+  const rawValue = targetTempInput.value.trim();
+  if (rawValue === '') {
+    alert('목표 온도를 입력하세요.');
+    return;
+  }
+
+  const parsed = Number.parseFloat(rawValue);
+  if (!Number.isFinite(parsed)) {
+    alert('유효한 온도를 입력하세요.');
+    return;
+  }
+
+  const normalized = Math.round(parsed * 10) / 10;
+  targetTempInput.value = normalized.toFixed(1);
+
+  try {
+    if (targetTempSendBtn) targetTempSendBtn.disabled = true;
+    const result = await postParams({ target_temp_c: normalized });
+    if (!result || result.ok !== true) {
+      throw new Error(result?.message || 'Parameter update rejected');
+    }
+    alert(`목표 온도 ${normalized.toFixed(1)}℃ 로 전송되었습니다.`);
+  } catch (e) {
+    console.error('Failed to send target temperature:', e);
+    alert('목표 온도 전송에 실패했습니다.');
+  } finally {
+    if (targetTempSendBtn) targetTempSendBtn.disabled = false;
+  }
+}
+
+targetTempSendBtn?.addEventListener('click', submitTargetTemperature);
+targetTempInput?.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter') {
+    ev.preventDefault();
+    submitTargetTemperature();
+  }
+});
+
+
+
 function applyParamsToUI(p) {
   const fs = p.sampling_frequency ?? 100000;
   const bs = p.block_samples ?? 16384;
@@ -678,6 +745,9 @@ function applyParamsToUI(p) {
   if (maCh) maCh.value = ma_ch_sec;
   if (maRNum_raw) maRNum_raw.value = ma_r_sec; // ❗ [신규 추가]
   if (maR_raw) maR_raw.value = ma_r_sec;     // ❗ [신규 추가]
+  if (targetTempInput && typeof p.target_temp_c === 'number') {
+    targetTempInput.value = p.target_temp_c.toFixed(1);
+  }
 
   
 
@@ -741,9 +811,10 @@ async function postParams(diff) {
   const j = await r.json();
   if (j.restarted) {
     softReconnectCharts();
-  } else {
+  } else if (j.params) {
     applyParamsToUI(j.params);
   }
+  return j;
 }
 
 
@@ -1063,6 +1134,9 @@ function connectWS() {
       // --- 헤더 통계 정보 업데이트 ---
       if (m.stats) {
         updateStatsDisplay(m.stats);
+      }
+      if (typeof m.current_tempC === 'number') {
+        updateCurrentTemperature(m.current_tempC);
       }
       return;
     }
