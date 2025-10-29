@@ -386,6 +386,13 @@ async def set_params(p: ParamsIn):
         app.state.pipeline = new_pipeline # 앱의 상태를 새 파이프라인으로 교체
         restarted = True
         print("[INFO] Pipeline has been restarted due to critical parameter change.")
+    else:
+        # 파이프라인 재시작이 필요 없는 경우에도,
+        # 업데이트된 파라미터 객체(new_params_obj)를 현재 파이프라인 객체의 params 속성에 직접 할당합니다.
+        # 이렇게 해야 target_temp_c 같은 비-재시작 파라미터 변경 사항이 반영됩니다.
+        app.state.pipeline.params = new_params_obj # <--- 이 줄 추가!
+        print(f"[INFO] Non-critical parameters updated. Target temp potentially set to: {new_params_obj.target_temp_c}") # 로그 추가 (선택 사항)
+    # ▲▲▲▲▲ [ 수정 완료 ] ▲▲▲▲▲    
     
     # 6. 파라미터 변경(및 재시작)이 완료된 후, PCB에 최신 설정 전송
     _send_cfg_if_serial(app.state.pipeline)    
