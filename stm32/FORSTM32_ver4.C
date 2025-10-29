@@ -643,7 +643,7 @@ static void DSP_Send_Data_Frame(void)
   if (n < 0 || n >= RDV2_TX_BUFSZ) return;
 
   // ---- 신규 필드: 실제 온도(°C) 추가 ----
-  n += snprintf(g_tx_line + n, RDV2_TX_BUFSZ - n, "%.2f|end\r\n", g_tempC);
+  n += snprintf(g_tx_line + n, RDV2_TX_BUFSZ - n, "%.3f|end\r\n", g_tempC);
 
   // snprintf 오류 또는 버퍼 오버플로우 시 함수 종료
   if (n < 0 || n >= RDV2_TX_BUFSZ) return;

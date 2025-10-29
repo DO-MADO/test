@@ -333,8 +333,10 @@
         <h2></h2>
         <div class="temperature-panel">
           <div class="temperature-row">
-            <div class="temperature-label">목표 온도 ℃</div>
+            <div class="temperature-label">목표 온도 ( ℃ ) </div>
             <div class="temperature-input-group">
+
+              <button id="tempUpBtn" class="btn temp-adjust-btn">▲</button>
               <input
                 type="number"
                 id="targetTempInput"
@@ -342,12 +344,14 @@
                 min="0.000"
                 max="50.000"
                 placeholder="25.005"
+                readonly
               />
+              <button id="tempDownBtn" class="btn temp-adjust-btn">▼</button>
               <button id="targetTempSendBtn" class="btn">적용하기</button>
             </div>
           </div>
           <div class="temperature-row">
-            <div class="temperature-label">현재 온도 ℃</div>
+            <div class="temperature-label">현재 온도 ( ℃ )</div>
             <div id="currentTempDisplay" class="temperature-display muted">--.---</div>
           </div>
         </div>

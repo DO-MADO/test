@@ -519,7 +519,7 @@ def _build_cfg_line_with_validation(params) -> str:
 
     print(f"    6. channel_mask  : {channel_mask} (0x{channel_mask:X})")
     print(f"    7. block_size    : {block_size} samples") # 단위 명시
-    print(f"    8. target_temp_c : {target_temp_c:.1f} °C") # (신규) 8번 필드 로그
+    print(f"    8. target_temp_c : {target_temp_c:.3f} °C") # (신규) 8번 필드 로그
     print("  [Coefficients (20)]")
     print(f"    9. coeffs_y1 (y1_den): {coeffs_y1}")
     print(f"    10. coeffs_y2         : {coeffs_y2}")

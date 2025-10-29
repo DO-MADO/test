@@ -464,7 +464,7 @@ class PipelineParams:
     lpf_cutoff_hz: float = 2500.0 # LPF 컷오프(Hz)
     movavg_ch: int = 1 # ❗ CH MA(Smoothing) 길이. 1이면 사실상 OFF.
     movavg_r: int = 5 # R moving avg 길이
-    target_temp_c: float = 25.0 # (신규) 목표 온도 기본값 25.0℃
+    target_temp_c: float = 25.005 # (신규) 목표 온도 기본값 25.0℃
     
     # UI/메타 데이터 ----------------------------------------
     label_names: List[str] = field(default_factory=lambda: ["yt0", "yt1", "yt2", "yt3"]) # 4ch 라벨

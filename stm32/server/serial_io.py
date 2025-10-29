@@ -190,7 +190,7 @@ def encode_cfg(
         str(movavg_ch),            # 채널 평균
         str(channel_mask),         # 채널 마스크
         str(block_size),           # 블록 크기
-        str(target_temp_c),        # (신규) 8번째 스칼라 필드로 추가
+        f"{target_temp_c:.3f}",        # (신규) 8번째 스칼라 필드로 추가
         arr(coeffs_y1),            # y1 계수 6개를 콤마로 이어붙임
         arr(coeffs_y2),            # y2 계수 6개
         arr(coeffs_y3),            # y3 계수 6개

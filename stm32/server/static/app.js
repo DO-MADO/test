@@ -95,6 +95,15 @@ const targetTempSendBtn = document.getElementById('targetTempSendBtn');
 const currentTempDisplay = document.getElementById('currentTempDisplay'); // 이것은 div 이므로 textContent로 업데이트해야 함
 let lastCurrentTemp = null; // 현재 온도 값 저장 변수 (기존 코드 유지)
 
+// ▼▼▼ [이 부분 추가] ▼▼▼
+// (추가) 새 DOM 요소 참조
+const tempUpBtn = document.getElementById('tempUpBtn');
+const tempDownBtn = document.getElementById('tempDownBtn');
+
+// (추가) 온도 조절 단위
+const TEMP_STEP = 0.005;
+// ▲▲▲ [추가 완료] ▲▲▲
+
 
 // [추가] Raw Data 상세 보기 모드용 DOM
 const rawViewBothBtn = document.getElementById('rawViewBothBtn');
@@ -666,13 +675,13 @@ function updateCurrentTemperature(tempC) {
   if (!currentTempDisplay) return; // ID 확인! (이건 div)
 
   if (!Number.isFinite(tempC) || tempC <= -200) {
-    currentTempDisplay.textContent = '--.- ℃'; // textContent 사용
+    currentTempDisplay.textContent = '--.---'; // textContent 사용
     currentTempDisplay.classList.add('muted');
     lastCurrentTemp = null;
     return;
   }
-  const formatted = tempC.toFixed(1);
-  currentTempDisplay.textContent = `${formatted} ℃`; // textContent 사용
+  const formatted = tempC.toFixed(3);
+  currentTempDisplay.textContent = `${formatted}`; // textContent 사용
   currentTempDisplay.classList.remove('muted');
   lastCurrentTemp = tempC;
 }
@@ -693,8 +702,8 @@ async function submitTargetTemperature() {
     return;
   }
 
-  const normalized = Math.round(parsed * 10) / 10;
-  targetTempInput.value = normalized.toFixed(1);
+  const normalized = Math.round(parsed * 1000) / 1000;
+  targetTempInput.value = normalized.toFixed(3);
 
   try {
     if (targetTempSendBtn) targetTempSendBtn.disabled = true;
@@ -702,7 +711,8 @@ async function submitTargetTemperature() {
     if (!result || result.ok !== true) {
       throw new Error(result?.message || 'Parameter update rejected');
     }
-    alert(`목표 온도 ${normalized.toFixed(1)}℃ 로 전송되었습니다.`);
+    // [수정] alert 창에서도 3자리 표시
+    alert(`목표 온도 ${normalized.toFixed(3)}℃ 로 전송되었습니다.`);
   } catch (e) {
     console.error('Failed to send target temperature:', e);
     alert('목표 온도 전송에 실패했습니다.');
@@ -719,6 +729,40 @@ targetTempInput?.addEventListener('keydown', (ev) => {
     submitTargetTemperature();
   }
 });
+
+// ▼▼▼ [이 함수 추가] ▼▼▼
+/**
+ * (신규) 온도 조절 버튼 핸들러 (UI 값만 변경)
+ * @param {number} amount - 변경할 값 (예: +0.005 또는 -0.005)
+ */
+function handleTempAdjust(amount) {
+  if (!targetTempInput) return;
+
+  // 1. 현재 값 읽기 (유효하지 않으면 placeholder 또는 기본값 25.0 사용)
+  let currentValue = parseFloat(targetTempInput.value);
+  if (!Number.isFinite(currentValue)) {
+    currentValue = parseFloat(targetTempInput.placeholder) || 25.000;
+  }
+
+  // 2. 새 값 계산
+  const newValue = currentValue + amount;
+
+  // 3. 정규화 (0.005 단위로 반올림)
+  const normalized = Math.round(newValue * 1000) / 1000;
+
+  // 4. Min/Max 범위 제한 (HTML의 min/max 속성값 사용)
+  const min = parseFloat(targetTempInput.min) || 0;
+  const max = parseFloat(targetTempInput.max) || 50;
+  const clampedValue = Math.max(min, Math.min(max, normalized));
+
+  // 5. UI에 즉시 반영 (❗ 서버 전송 없음)
+  targetTempInput.value = clampedValue.toFixed(3);
+}
+
+// (신규) 새 버튼에 이벤트 리스너 연결
+tempUpBtn?.addEventListener('click', () => handleTempAdjust(TEMP_STEP));
+tempDownBtn?.addEventListener('click', () => handleTempAdjust(-TEMP_STEP));
+// ▲▲▲ [추가 완료] ▲▲▲
 
 
 
@@ -747,7 +791,7 @@ function applyParamsToUI(p) {
   if (maRNum_raw) maRNum_raw.value = ma_r_sec; // ❗ [신규 추가]
   if (maR_raw) maR_raw.value = ma_r_sec;     // ❗ [신규 추가]
   if (targetTempInput && typeof p.target_temp_c === 'number') {
-    targetTempInput.value = p.target_temp_c.toFixed(1);
+    targetTempInput.value = p.target_temp_c.toFixed(3);
   }
 
   
