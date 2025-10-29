@@ -242,8 +242,8 @@ static float ntc_voltage_to_celsius(float v_div, float v_ref, float r_fixed_ohm)
 static void Update_Current_Temperature(void)
 {
   // TODO: 프로젝트에 맞게 실제 읽기 함수로 교체
-  // float v_div = ADS1115_ReadVoltage(0);   // [V]
-  float v_div = 1.000f;                      // 임시 값 (테스트용)
+  // float v_div = ADS1115_ReadVoltage(0);   // [V <-- 실제 adc로 맞추고 ]
+  float v_div = 1.000f;                      // 임시 값 (테스트용  / 이건 실제 adc 하면 삭제 하면 됨)
 
   const float v_ref   = 3.300f;              // 분압 기준 전압
   const float r_fixed = 10000.0f;            // 분압 저항(직렬)

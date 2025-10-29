@@ -92,8 +92,8 @@ const statsDisplay = document.getElementById('statsDisplay');
 // --- Temperature 컨트롤 ---
 const targetTempInput = document.getElementById('targetTempInput');
 const targetTempSendBtn = document.getElementById('targetTempSendBtn');
-const currentTempDisplay = document.getElementById('currentTempDisplay');
-let lastCurrentTemp = null;
+const currentTempDisplay = document.getElementById('currentTempDisplay'); // 이것은 div 이므로 textContent로 업데이트해야 함
+let lastCurrentTemp = null; // 현재 온도 값 저장 변수 (기존 코드 유지)
 
 
 // [추가] Raw Data 상세 보기 모드용 DOM
@@ -663,20 +663,20 @@ function trimZeros(s) {
 }
 
 function updateCurrentTemperature(tempC) {
-  if (!currentTempDisplay) return;
+  if (!currentTempDisplay) return; // ID 확인! (이건 div)
 
   if (!Number.isFinite(tempC) || tempC <= -200) {
-    currentTempDisplay.textContent = '--.- ℃';
+    currentTempDisplay.textContent = '--.- ℃'; // textContent 사용
     currentTempDisplay.classList.add('muted');
     lastCurrentTemp = null;
     return;
   }
-
   const formatted = tempC.toFixed(1);
-  currentTempDisplay.textContent = `${formatted} ℃`;
+  currentTempDisplay.textContent = `${formatted} ℃`; // textContent 사용
   currentTempDisplay.classList.remove('muted');
   lastCurrentTemp = tempC;
 }
+
 
 async function submitTargetTemperature() {
   if (!targetTempInput) return;
@@ -712,6 +712,7 @@ async function submitTargetTemperature() {
 }
 
 targetTempSendBtn?.addEventListener('click', submitTargetTemperature);
+// 목표 온도 입력 필드에서 Enter 키 처리
 targetTempInput?.addEventListener('keydown', (ev) => {
   if (ev.key === 'Enter') {
     ev.preventDefault();

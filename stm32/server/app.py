@@ -485,7 +485,7 @@ def _build_cfg_line_with_validation(params) -> str:
     # 3) validate: 길이/타입/범위
     validate_cfg_args(
         lpf_cutoff_hz, sampling_rate_ksps, target_rate,
-        movavg_r, movavg_ch, channel_mask, block_size,
+        movavg_r, movavg_ch, channel_mask, block_size,target_temp_c,
         coeffs_y1, coeffs_y2, coeffs_y3, coeffs_yt,
     )
     
