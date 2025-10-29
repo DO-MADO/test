@@ -706,59 +706,160 @@ margin-top: 16px;
 
 
 /* ===================== [온도 Control] ===================== */
+
+/*
+ * [변경]
+ * 패널을 Flex 컨테이너로 만들어,
+ * '현재 온도'와 '목표 온도' 카드의 순서를 바꿀 수 있도록 합니다.
+ * (하단의 order 속성 참고)
+ *
+ * 패널 자체의 테두리와 배경은 제거하여 
+ * 내부 카드(row)가 더 돋보이게 합니다.
+*/
 .temperature-panel {
   display: flex;
-  flex-direction: column;
-  gap: 20px;
-  padding: 24px;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  background: rgba(58, 59, 69, 0.35);
+  flex-direction: column; /* 자식 요소(row)들을 세로로 쌓음 */
+  gap: 24px;
+  padding: 0; /* 패딩 제거 */
+  border: none; /* 테두리 제거 */
+  background: none; /* 배경 제거 */
+  align-items: center; /* ❗ [추가] 카드(row)들을 중앙 정렬 */
 }
 
+/*
+ * [변경]
+ * 각 'row'를 이미지처럼 독립된 카드로 만듭니다.
+ * 내부 요소(레이블, 컨트롤)는 세로로 쌓고 중앙 정렬합니다.
+*/
 .temperature-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
+  flex-direction: column; /* 레이블과 컨트롤을 세로로 쌓음 */
+  align-items: center; /* 중앙 정렬 */
+  justify-content: flex-start;
+  text-align: center;
   gap: 16px;
+  
+  /* 카드 스타일 */
+  background: var(--panel);
+  padding: 24px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  width: 100%;
+  max-width: 500px; /* 이 값을 조절하여 원하는 너비로 설정하세요 */
 }
 
+/* * [핵심]
+ * :has() 선택자를 사용해 각 row를 식별하고,
+ * order 속성으로 '현재 온도'가 위로, '목표 온도'가 아래로 가도록 순서를 재배치합니다.
+*/
+.temperature-row:has(#currentTempDisplay) {
+  order: 1; /* '현재 온도' 섹션을 1번째로 */
+}
+
+.temperature-row:has(#targetTempInput) {
+  order: 2; /* '목표 온도' 섹션을 2번째로 */
+}
+
+/*
+ * [변경]
+ * 레이블을 카드 좌측 상단에 배치합니다.
+*/
 .temperature-label {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
   color: var(--text);
+  width: 100%; /* 너비 100% */
+  align-self: flex-start; /* flex-start로 왼쪽 정렬 효과 */
 }
 
+/*
+ * [변경]
+ * '목표 온도'의 입력 그룹(input + button)을
+ * 세로로 쌓고 중앙 정렬합니다.
+*/
 .temperature-input-group {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+  flex-direction: column; /* 입력창과 버튼을 세로로 쌓음 */
+  align-items: center; /* 중앙 정렬 */
+  gap: 24px; /* 입력창과 버튼 사이 간격 */
+  width: 100%;
 }
 
+/*
+ * [핵심 변경]
+ * '목표 온도' 입력창을 이미지의 '5°C'처럼
+ * 큼직한 중앙 숫자로 스타일링합니다.
+*/
 .temperature-input-group input[type="number"] {
-  width: 140px;
+  font-size: 60px;
+  font-weight: 600;
+  color: var(--accent); /* 설정 값임을 강조하기 위해 accent 색상 사용 */
+  text-align: center;
+  width: 100%;
+  max-width: 240px; /* 너무 커지지 않게 */
+  padding: 10px 0;
+  
+  /* ❗ 깔끔한 숫자 표시를 위해 테두리, 배경, 화살표 제거 */
+  border: none;
+  background: none;
+  -moz-appearance: textfield;
 }
 
+.temperature-input-group input[type="number"]::-webkit-outer-spin-button,
+.temperature-input-group input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/*
+ * [변경]
+ * 전송 버튼을 입력창 아래에 배치하고,
+ * 폰트와 패딩을 키워 큼직하게 만듭니다.
+*/
+#targetTempSendBtn {
+    font-size: 16px;
+    font-weight: 600;
+    padding: 12px 24px;
+    width: 100%;
+    max-width: 240px; /* 입력창과 너비 맞춤 */
+}
+
+/*
+ * [핵심 변경]
+ * '현재 온도' 표시를 이미지의 '27°C'처럼
+ * 매우 큼직하고 얇은 폰트로 변경합니다.
+*/
 .temperature-display {
-  min-width: 140px;
-  padding: 10px 16px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--panel);
-  font-size: 20px;
-  font-weight: 600;
-  text-align: right;
-  letter-spacing: 0.5px;
+  font-size: 80px;
+  font-weight: 300; /* 얇은 폰트 */
+  color: var(--text);
+  line-height: 1;
+  text-align: center;
+  
+  /* ❗ 기존의 박스 스타일(테두리, 배경 등) 모두 제거 */
+  min-width: 0;
+  width: auto;
+  padding: 10px 0;
+  border: none;
+  background: none;
+  letter-spacing: -1px;
 }
 
 .temperature-display.muted {
-  color: var(--muted);
+  color: var(--text);
 }
 
+/*
+ * [변경]
+ * 힌트 텍스트를 카드(row) 아래에 중앙 정렬합니다.
+*/
 .temperature-hint {
-  margin-top: 18px;
-  margin-left: 6px;
+  margin-top: 28px;
+  margin-left: 0;
   line-height: 1.6;
+  width: 100%;
+  text-align: center;
+  padding: 0 16px;
+  box-sizing: border-box;
 }

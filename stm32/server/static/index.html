@@ -330,25 +330,25 @@
 
 
       <section id="temperature-section" class="card tab-content">
-        <h2>· Temperature</h2>
+        <h2></h2>
         <div class="temperature-panel">
           <div class="temperature-row">
-            <div class="temperature-label">목표 온도 (℃)</div>
+            <div class="temperature-label">목표 온도 ℃</div>
             <div class="temperature-input-group">
               <input
                 type="number"
                 id="targetTempInput"
-                step="0.1"
-                min="-100"
-                max="200"
-                placeholder="예: 60.0"
+                step="0.005"
+                min="0.000"
+                max="50.000"
+                placeholder="25.005"
               />
-              <button id="targetTempSendBtn" class="btn">전송하기</button>
+              <button id="targetTempSendBtn" class="btn">적용하기</button>
             </div>
           </div>
           <div class="temperature-row">
-            <div class="temperature-label">현재 온도 (℃)</div>
-            <div id="currentTempDisplay" class="temperature-display muted">--.- ℃</div>
+            <div class="temperature-label">현재 온도 ℃</div>
+            <div id="currentTempDisplay" class="temperature-display muted">--.---</div>
           </div>
         </div>
         <p class="temperature-hint muted">

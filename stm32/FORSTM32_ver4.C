@@ -218,6 +218,9 @@ static inline double polyval_f64(const double* c, int len, double x);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+static void DSP_Parse_Settings(char* line); // 또는 extern void DSP_Parse_Settings(char* line);
+
+
 
 /* ==========================================================
  * [신규] 온도 관련
@@ -661,31 +664,57 @@ static void DSP_Send_Data_Frame(void)
   RDV2_DE_RX();
 }
 
-/* ==== UART Rx 콜백 ==== */
+/* ==== UART Rx 콜백: 라인 조립 ('\n' 또는 '|end' 감지 시 처리) ==== */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == USART3) {
     uint8_t c = g_rx_byte;
-    if (g_rx_len < (RDV2_RX_BUFSZ-1)) {
+
+    // 1) 라인 버퍼에 누적
+    if (g_rx_len < (RDV2_RX_BUFSZ - 1)) {
       g_rx_line[g_rx_len++] = (char)c;
       g_rx_line[g_rx_len]   = '\0';
     } else {
-      g_rx_len = 0; g_rx_line[0]='\0'; // overflow
+      // overflow → 리셋
+      g_rx_len = 0;
+      g_rx_line[0] = '\0';
     }
 
-    if (c=='\n' || (g_rx_len>=4 && strstr(g_rx_line, "|end")!=NULL)) {
+    // 2) 종료 조건: 개행 또는 "|end" 등장
+    if (c == '\n' || (g_rx_len >= 4 && strstr(g_rx_line, "|end") != NULL)) {
+
+      // 안전하게 로컬 복사 후 CR/LF 제거
       char line_buf[RDV2_RX_BUFSZ];
-      strncpy(line_buf, g_rx_line, g_rx_len); line_buf[g_rx_len] = '\0';
-      for (int i = g_rx_len - 1; i >= 0; i--) { // \r, \n 제거
-          if (line_buf[i] == '\r' || line_buf[i] == '\n') line_buf[i] = '\0';
-          else break;
+      size_t n = (g_rx_len < (RDV2_RX_BUFSZ - 1)) ? g_rx_len : (RDV2_RX_BUFSZ - 1);
+      memcpy(line_buf, g_rx_line, n);
+      line_buf[n] = '\0';
+
+      // 우측 공백/CR/LF 제거
+      for (int i = (int)n - 1; i >= 0; i--) {
+        char ch = line_buf[i];
+        if (ch == '\r' || ch == '\n' || ch == ' ' || ch == '\t') line_buf[i] = '\0';
+        else break;
       }
+
+      // 3) 새 파서 호출 (설정 프레임 반영)
       DSP_Parse_Settings(line_buf);
-      g_rx_len = 0; g_rx_line[0]='\0'; // 버퍼 리셋
+
+      // (선택) REQ 트리거 프레임도 처리하고 싶으면:
+      if (strcmp(line_buf, "st|REQ|end") == 0) {
+        extern void rdv2_send_data_frame_once(void);
+        rdv2_send_data_frame_once();
+      }
+
+      // 4) 입력 버퍼 리셋
+      g_rx_len = 0;
+      g_rx_line[0] = '\0';
     }
+
+    // 5) 다음 바이트 재개
     HAL_UART_Receive_IT(&huart3, &g_rx_byte, 1);
   }
 }
+
 
 /* USER CODE END 0 */
 
