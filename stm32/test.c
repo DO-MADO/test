@@ -179,6 +179,8 @@ typedef struct {
 #define TC_DAC_V_MIN (0.0f)
 // TC_DAC_V_MAX는 bsp_dac.c의 BSP_DAC_VREF(기본 2.5f)와 일치해야 합니다.
 #define TC_DAC_V_MAX (2.5f)
+#define TC_TEMP_SET_MIN (0.0f)
+#define TC_TEMP_SET_MAX (100.0f)
 
 // 선형 변환을 위한 기울기 및 오프셋 계산 (V = m*T + b)
 #define TC_T2V_SLOPE ((TC_DAC_V_MAX - TC_DAC_V_MIN) / (TC_TEMP_SET_MAX - TC_TEMP_SET_MIN))
@@ -255,16 +257,9 @@ static char       g_settings_buf[RDV2_RX_BUFSZ]; // 파싱 전용 안전 버퍼
 // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
 
-// (PC -> PCB)파서 디버깅 위한 카운트 추가
-volatile uint32_t g_cfg_rx_seq      = 0; // UART에서 '완전한 프레임'을 1건 수신했음
-volatile uint32_t g_cfg_parse_ok    = 0; // 토큰 개수/배열 길이/숫자 변환 모두 OK
-volatile uint32_t g_cfg_applied_seq = 0; // g_params에 반영 + DSP_Reset_State() 까지 완료
-// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
 
 static float    g_tempC = -999.0f;     // 최신 실제 온도(°C)
-static float    g_target_tempC_mon = -999.0f; // 최신 모니터링된 목표 온도(°C)
-
 static const int sensor_idx[4]   = {0, 2, 4, 6};
 static const int standard_idx[4] = {1, 3, 5, 7};
 static const double SOS_COEFFS[SOS_SECTIONS][6] = {
@@ -334,6 +329,8 @@ static float ntc_voltage_to_celsius(float v_div_f)
        if (v_div >= v_ref) v_div = v_ref - 1e-9;
 
   // 2. NTC 저항 계산 (전압 분배기 공식 역산)
+  //const float r_ntc = NTC_R_FIXED * (v_div / (NTC_V_REF - v_div));
+  //const double r_ntc = r_fixed * (v_div / (v_ref - v_div));
   const double r_ntc = v_div / NTC_I_BIAS;
 
   // 3. Steinhart-Hart 공식 적용 (1단계 적용)
@@ -353,16 +350,16 @@ static float ntc_voltage_to_celsius(float v_div_f)
 /* 현재 온도 갱신(예: ADS1115 0번 채널에서 분압 읽기) */
 static void Update_Current_Temperature(void)
 {
-
+    //float v_div = 0.0f; // NTC 전압 (채널 0)
     float v_div_mv = 0.0f; // [수정] 밀리볼트(mV) 단위임을 명시
-    float v_set_mv = 0.0f; // [신규] 목표 온도 모니터 전압 (mV)
-    HAL_StatusTypeDef status0, status1;
+    HAL_StatusTypeDef status0;
 
     // 1. "ads1115_process"가 새 데이터를 준비했는지 확인합니다.
     if (ADS1115_Process_IsDataReady())
     {
         // 2. "ads1115_process"로부터 값을 가져옵니다.
-        ADS1115_Process_GetData(&v_div_mv, &v_set_mv, &status0, &status1);// (mV) 값 가져오기
+        //ADS1115_Process_GetData(&v_div, NULL, &status0, NULL);
+        ADS1115_Process_GetData(&v_div_mv, NULL, &status0, NULL); // (mV) 값 가져오기
 
         if (status0 == HAL_OK)
         {
@@ -393,20 +390,6 @@ static void Update_Current_Temperature(void)
         {
             // ADC 읽기 실패 시
             g_tempC = -999.0f; // 에러 값
-
-            if (status1 == HAL_OK)
-                    {
-                        // 3.1. mV -> V 변환
-                        const float v_set_v = v_set_mv / 1000.0f;
-                        // 3.2. 동일한 변환 공식 적용 (캘리브레이션 제외)
-                        g_target_tempC_mon = ntc_voltage_to_celsius(v_set_v);
-                    }
-                    else
-                    {
-                        g_target_tempC_mon = -999.0f;
-                    }
-
-
         }
     }
     // (IsDataReady()가 0이면 g_tempC는 이전 값을 유지)
@@ -604,7 +587,7 @@ static void DSP_Process_Sample(void)
     /* Stage 10: Data Output (전송 플래그 설정)                   */
     /* ========================================================== */
 
-    //g_send_flag = 1; // 전송 플래그
+    g_send_flag = 1; // 전송 플래그
                      // main() 루프에서 DSP_Send_Data_Frame()을 호출하도록 플래그 설정
 }
 
@@ -614,48 +597,15 @@ static void DSP_Process_Sample(void)
  * ========================================================== */
 static void DSP_Parse_Settings(char* line)
 {
-
-
-     // ▼▼▼▼▼ [디버깅] 함수 호출 확인용 ACK 전송 코드 ▼▼▼▼▼
-     // PC에서 "st|...|end" 프레임을 보내면, 이 함수가 호출되고 PC는 "[DBG] CALLED"를 수신해야 합니다.
-     {
-         const char* dbg_msg = "[DBG] Parse CALLED\r\n";
-         RDV2_DE_TX(); // RS485 송신 모드
-         HAL_UART_Transmit(&huart3, (uint8_t*)dbg_msg, (uint16_t)strlen(dbg_msg), 100);
-
-         // 전송이 완료될 때까지 대기 (중요)
-         uint32_t tickstart = HAL_GetTick();
-         while (__HAL_UART_GET_FLAG(&huart3, UART_FLAG_TC) == RESET) {
-             if((HAL_GetTick() - tickstart) > 5) { break; } // 5ms 타임아웃
-         }
-         HAL_Delay(1); // 버스 안정화
-         RDV2_DE_RX(); // RS485 수신 모드 복귀
-     }
-     // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
-
-
-  // [수정 1] "st|"로 시작하는지(strncmp) 검사하는 대신,
-  //      문자열 '안에' "st|"가 있는지(strstr) 찾아서 그 "위치"를 기억합니다.
-  char* start_ptr = strstr(line, "st|");
-
-  // "st|"가 아예 없거나, "st|" 뒤에 "|end"가 없으면 무시합니다.
-  if (start_ptr == NULL || !strstr(start_ptr, "|end")) {
-      return;
-  }
+  if (strncmp(line, "st|", 3) != 0 || !strstr(line, "|end")) return;
 
   char* tok[32]; int ntok = 0;
-
-  // [수정 2] line(문자열 처음)부터가 아닌,
-  //      찾은 "st|"(start_ptr) 위치부터 토큰 분리를 시작합니다.
-  char *p = strtok(start_ptr, "|");
-
-  // --- 이하 로직은 동일 ---
+  char *p = strtok(line, "|");
   while (p && ntok < 32) { tok[ntok++] = p; p = strtok(NULL, "|"); }
 
   // 허용 토큰 수:
   //  - 레거시(스칼라7 + 배열4) = 13
   //  - 신규(스칼라8 + 배열4)   = 14
-  // (start_ptr부터 시작했으므로 tok[0]는 "st", tok[ntok-1]은 "end"가 됩니다)
   if ((ntok != 13 && ntok != 14) || strcmp(tok[0], "st") != 0 || strcmp(tok[ntok - 1], "end") != 0) {
     return;
   }
@@ -722,26 +672,20 @@ static void DSP_Parse_Settings(char* line)
   np.alpha=1.0; np.beta=1.0; np.gamma=1.0; np.k=10.0; np.b=0.0; np.r_abs=1;
   np.y1_num[0]=1.0; np.y1_num[1]=0.0; np.y1_num_len=2;
 
-
-  /* [COUNT] 파싱/검증 OK (적용 직전) */
-  g_cfg_parse_ok++;
-
   /* 모든 검증 통과 시 실제 적용 */
   g_params = np;
   DSP_Reset_State(); // 상태 리셋
   // (선택) 성공 알림: HAL_UART_Transmit(&huart3, (uint8_t*)"ACK CFG OK\r\n", 12, 100);
 
-  /* [COUNT] g_params에 반영 + 리셋까지 완료 */
-  g_cfg_applied_seq++;
-
 
   // ▼▼▼ [이곳에 온도 관련 목표값 설정 후 실제 작동하는 로직을 위해서 필요] ▼▼▼
   // PC에서 받은 목표 온도를 실제 온도 컨트롤러(DAC)에 적용합니다.
-    // g_params.target_temp_c가 유효한 값(0도 이상)일 경우에B만 설정합니다. (기본값 -1.0f)
+    // g_params.target_temp_c가 유효한 값(0도 이상)일 경우에만 설정합니다. (기본값 -1.0f)
     if (g_params.target_temp_c >= 0.0f) {
         TC_Set_Target_Temperature(g_params.target_temp_c);
     }
   // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+
 
 }
 
@@ -918,9 +862,6 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
           strncpy(g_settings_buf, line_buf, RDV2_RX_BUFSZ - 1);
           g_settings_buf[RDV2_RX_BUFSZ - 1] = '\0'; // 안전하게 널 종료
           g_settings_flag = 1; // 깃발 올리기!
-
-          /* [COUNT] 완전한 설정 프레임 1건 수신 완료 */
-          g_cfg_rx_seq++;
       }
       // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
@@ -963,12 +904,12 @@ int main(void)
 
   /* USER CODE BEGIN SysInit */
   /* ▼▼▼ [해결 방안] 전원 및 외부 IC 안정화를 위한 초기 지연 추가 ▼▼▼ */
-    HAL_Delay(500); // 200ms 대기 (문제가 지속되면 500ms까지 늘려볼 수 있습니다)
+    HAL_Delay(200); // 200ms 대기 (문제가 지속되면 500ms까지 늘려볼 수 있습니다)
     /* ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ */
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
-  MX_GPIO_Init();
+  MX_GPIO_Init();spq
   MX_SPI1_Init();
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
@@ -981,11 +922,12 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
 
+
   /* ==== [신규] 온도 제어 하드웨어 초기화 ==== */
     // 1. DAC 초기화 (SPI2, bsp_dac.c)
     if (BSP_DAC_Init() != HAL_OK) {
         // DAC 초기화 실패 처리
-        //Error_Handler();
+        // Error_Handler();
     }
 
     // 2. ADS1115 초기화 및 타이머 시작 (I2C1, TIM7, ads1115_process.c)
@@ -993,29 +935,9 @@ int main(void)
     ADS1115_Process_Init();
     ADC_Process_Init(); // AD7606 시작
 
-    // 4. [신규] 첫 번째 현재 온도를 강제로 읽어오기
-        uint32_t init_start = HAL_GetTick();
-        // TIM7 인터럽트가 첫 번째 값을 읽을 때까지 최대 1초 대기
-        while (!ADS1115_Process_IsDataReady() && (HAL_GetTick() - init_start < 1000)) {
-             HAL_Delay(10); // CPU 부담을 줄이며 대기
-        }
-
-   Update_Current_Temperature(); // g_tempC에 첫 번째 현재 온도값 저장
-
-   // 5. [수정] TEC를 'Idle' 상태로 시작
-       if (g_tempC > -900.0f) { // g_tempC가 -999 (에러)가 아니라면
-           // (성공) 목표 온도를 현재 온도로 설정하여 TEC 전류 0A
-           TC_Set_Target_Temperature(g_tempC);
-           g_params.target_temp_c = g_tempC; // g_params도 동기화
-       } else {
-           // (실패) ADS1115 읽기 실패. 안전하게 최소값으로 설정
-           TC_Set_Target_Temperature(TC_TEMP_SET_MIN);
-           g_params.target_temp_c = TC_TEMP_SET_MIN;
-       }
-
 
     // 3. 초기 안전 온도 설정 (최소값으로 시작)
-    //TC_Set_Target_Temperature(TC_TEMP_SAFE_START);
+    TC_Set_Target_Temperature(TC_TEMP_SAFE_START);
 
 
   /* ==== SW_1 DSP: 초기화 ==== */
