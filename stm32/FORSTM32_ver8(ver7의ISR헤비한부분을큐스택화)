@@ -46,6 +46,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <inttypes.h>
+#include "circular_queue.h" // <-- [추가] 큐 헤더
 
 /* USER CODE END Includes */
 
@@ -233,6 +234,11 @@ static char       g_settings_buf[RDV2_RX_BUFSZ]; // 파싱 전용 안전 버퍼
 
 
 static float    g_tempC = -999.0f;     // 최신 실제 온도(°C)
+
+// ▼▼▼▼▼ [추가] UART 수신 바이트 큐 ▼▼▼▼▼
+static QueueType g_rx_queue;
+// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+
 static const int sensor_idx[4]   = {0, 2, 4, 6};
 static const int standard_idx[4] = {1, 3, 5, 7};
 static const double SOS_COEFFS[SOS_SECTIONS][6] = {
@@ -327,6 +333,60 @@ static void Update_Current_Temperature(void)
     // (IsDataReady()가 0이면 g_tempC는 이전 값을 유지)
 }
 
+
+/* ==========================================================
+ * [신규] 큐(Queue) 처리기 (메인 루프에서 호출)
+ * ========================================================== */
+/**
+ * @brief 수신 큐(g_rx_queue)를 처리하여 완성된 라인을 g_settings_buf로 옮김
+ * @note  이 함수는 ver7의 "헤비한 ISR" 로직을 메인 루프로 옮긴 것입니다.
+ */
+static void Process_RX_Queue(void)
+{
+  // 큐가 비어있으면 할 일이 없음
+  if (is_empty(&g_rx_queue)) {
+    return;
+  }
+
+  // 큐에 데이터가 있는 동안 계속 처리
+  while (!is_empty(&g_rx_queue))
+  {
+    // 1바이트를 큐에서 꺼냄
+    uint8_t c = dequeue(&g_rx_queue);
+
+    // 1) 라인 버퍼에 누적 (기존 ISR 로직과 동일)
+    if (g_rx_len < (RDV2_RX_BUFSZ - 1)) {
+      g_rx_line[g_rx_len++] = (char)c;
+      g_rx_line[g_rx_len]   = '\0';
+    } else {
+      g_rx_len = 0; g_rx_line[0] = '\0'; // overflow
+    }
+
+    // 2) 종료 조건: 개행 또는 "|end" 등장 (기존 ISR 로직과 동일)
+    if (c == '\n' || (g_rx_len >= 4 && strstr(g_rx_line, "|end") != NULL)) 
+    {
+      // [ver7 ISR 로직을 그대로 이곳으로 이동]
+      char line_buf[RDV2_RX_BUFSZ];
+      size_t n = (g_rx_len < (RDV2_RX_BUFSZ - 1)) ? g_rx_len : (RDV2_RX_BUFSZ - 1);
+      memcpy(line_buf, g_rx_line, n);
+      line_buf[n] = '\0';
+
+      for (int i = (int)n - 1; i >= 0; i--) {
+        char ch = line_buf[i];
+        if (ch == '\r' || ch == '\n' || ch == ' ' || ch == '\t') line_buf[i] = '\0';
+        else break;
+      }
+
+      if (g_settings_flag == 0) {
+          strncpy(g_settings_buf, line_buf, RDV2_RX_BUFSZ - 1);
+          g_settings_buf[RDV2_RX_BUFSZ - 1] = '\0';
+          g_settings_flag = 1; // 깃발 올리기
+      }
+      
+      g_rx_len = 0; g_rx_line[0] = '\0'; // 입력 버퍼 리셋
+    }
+  } // end while(!is_empty)
+}
 
 
 /* ==========================================================
@@ -687,7 +747,7 @@ static void DSP_Send_Data_Frame(void)
 
 
   int n = snprintf(g_tx_line, RDV2_TX_BUFSZ,
-                   "AIM|DSP|st|%lu|%lu|%.3f|%u|%u|",  // sampling_rate 소수점 3자리까지 (kS/s)
+                   "st|%lu|%lu|%.3f|%u|%u|",  // sampling_rate 소수점 3자리까지 (kS/s)
                    (unsigned long)block_count,
                    (unsigned long)timestamp_ms,
                    sampling_rate_out_ksps,  // kS/s 단위 전송
@@ -738,59 +798,20 @@ static void DSP_Send_Data_Frame(void)
   RDV2_DE_RX();
 }
 
-/* ==== UART Rx 콜백 ==== */
+/* ==== UART Rx 콜백 (초경량 ISR) ==== */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == USART3) {
-    uint8_t c = g_rx_byte;
-
-    // 1) 라인 버퍼에 누적
-    if (g_rx_len < (RDV2_RX_BUFSZ - 1)) {
-      g_rx_line[g_rx_len++] = (char)c;
-      g_rx_line[g_rx_len]   = '\0';
-    } else {
-      // overflow → 리셋
-      g_rx_len = 0;
-      g_rx_line[0] = '\0';
-    }
-
-    // 2) 종료 조건: 개행 또는 "|end" 등장
-    if (c == '\n' || (g_rx_len >= 4 && strstr(g_rx_line, "|end") != NULL)) {
-
-      // 안전하게 로컬 복사 후 CR/LF 제거
-      char line_buf[RDV2_RX_BUFSZ];
-      size_t n = (g_rx_len < (RDV2_RX_BUFSZ - 1)) ? g_rx_len : (RDV2_RX_BUFSZ - 1);
-      memcpy(line_buf, g_rx_line, n);
-      line_buf[n] = '\0';
-
-      // 우측 공백/CR/LF 제거
-      for (int i = (int)n - 1; i >= 0; i--) {
-        char ch = line_buf[i];
-        if (ch == '\r' || ch == '\n' || ch == ' ' || ch == '\t') line_buf[i] = '\0';
-        else break;
-      }
-
-      // ▼▼▼▼▼ [수정] 파서 직접 호출 대신 깃발 세우기 ▼▼▼▼▼
-      // 3) 새 파서 호출 (설정 프레임 반영) <-- (제거)
-      // DSP_Parse_Settings(line_buf); // <--- 이 줄을 주석 처리하거나 삭제합니다.
       
-      // 3) 메인 루프가 처리하도록 버퍼에 복사하고 깃발(Flag) 설정
-      if (g_settings_flag == 0) { // 이전 프레임 처리가 끝났을 때만 복사
-          strncpy(g_settings_buf, line_buf, RDV2_RX_BUFSZ - 1);
-          g_settings_buf[RDV2_RX_BUFSZ - 1] = '\0'; // 안전하게 널 종료
-          g_settings_flag = 1; // 깃발 올리기!
-      }
-      // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
-
-      // 4) 입력 버퍼 리셋 (기존과 동일)
-      g_rx_len = 0;
-      g_rx_line[0] = '\0';
-    }
-
-    // 5) 다음 바이트 재개 (기존과 동일)
-    HAL_UART_Receive_IT(&huart3, &g_rx_byte, 1);
+      // 1. 큐(바구니)에 1바이트를 담습니다.
+      enqueue(&g_rx_queue, g_rx_byte);
+      
+      // 2. 다음 1바이트 수신을 재개합니다.
+      HAL_UART_Receive_IT(&huart3, &g_rx_byte, 1);
   }
 }
+
+
 /* USER CODE END 0 */
 
 /**
@@ -891,6 +912,11 @@ int main(void)
   memset(g_latest_results, 0, sizeof(g_latest_results));
 
 
+  // ▼▼▼▼▼ [추가] 수신 큐(Queue) 초기화 ▼▼▼▼▼
+  init(&g_rx_queue);
+  // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+
+
 
   HAL_UART_Receive_IT(&huart3, &g_rx_byte, 1); // UART 수신 시작
   ADC_Process_Init(); // AD7606 시작
@@ -904,6 +930,10 @@ int main(void)
      RDV2_DE_RX();       // RS485 수신 모드  // While 문안에 <-- 이걸 넣었음!!!!!!-10. 29.
 
     /* USER CODE BEGIN 3 */
+
+    // ▼▼▼▼▼ [추가] 메인 루프에서 큐 처리 ▼▼▼▼▼
+    Process_RX_Queue();
+    // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
     // ▼▼▼▼▼ [수정] 깃발(Flag) 확인 로직 추가 ▼▼▼▼▼
     if (g_settings_flag) {
