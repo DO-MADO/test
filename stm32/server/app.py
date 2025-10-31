@@ -549,7 +549,6 @@ def _build_cfg_line_with_validation(params) -> str:
 
 
 def _send_cfg_if_serial(pipeline):
-    
     """
     [직렬 CFG 송신 트리거]
     - 목적: 현재 PipelineParams를 기반으로 'PC → PCB 설정 프레임(11필드 압축형)'을 만들어,
@@ -567,11 +566,12 @@ def _send_cfg_if_serial(pipeline):
       펌웨어 쪽 명세와 단위를 반드시 일치시킬 것.
     - channel_mask: 8채널 고정 시스템이면 255(0xFF) 고정 사용.
     """
-    
+
     # Serial TX 포트가 있을 때만 전송 (없으면 조용히 종료)
     sp = getattr(pipeline.params, "serial", None)
     if not sp or not pipeline.src or not getattr(pipeline.src, "tx", None):
         return
+
     params = pipeline.params
 
     try:
@@ -582,7 +582,16 @@ def _send_cfg_if_serial(pipeline):
         print(f"[CFG VALIDATION ERROR] {e}")
         return
 
-    pipeline.src.tx.write_line(cfg_line)
+    # ✅ 1초 동안 총 3회 전송 (대략 333ms 간격)
+    interval = 1.0 / 3.0
+    for i in range(3):
+        try:
+            pipeline.src.tx.write_line(cfg_line)  # 내부에서 개행/flush 처리 + TX 로그 출력
+        except Exception as e:
+            print(f"[CFG] send failed ({i+1}/3): {e}")
+        if i < 2:
+            time.sleep(interval)
+
 
 
 

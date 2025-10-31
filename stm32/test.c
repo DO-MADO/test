@@ -170,27 +170,28 @@ typedef struct {
 #define RDV2_TX_BUFSZ    2048
 
 
-#define TC_TEMP_SET_MIN (10.0f)
-#define TC_TEMP_SET_MAX (50.0f)
+#define TC_TEMP_SET_MIN (10.0f) // 사용자가 설정 가능한 최소 온도
+#define TC_TEMP_SET_MAX (50.0f) // 사용자가 설정 가능한 최대 온도
 /* 안전한 시작 온도 정의 */
-#define TC_TEMP_SAFE_START (20.0f)
+#define TC_TEMP_SAFE_START (20.0f) // [대체됨] Idle Start 로직이 이 값을 대체함
 // 1. DAC 출력 설정 (외부 온도 컨트롤러의 목표값 설정 사양)
 // 가정: 외부 컨트롤러가 0V~2.5V 입력을 받아 0°C~100°C로 설정됨.
 #define TC_DAC_V_MIN (0.0f)
 // TC_DAC_V_MAX는 bsp_dac.c의 BSP_DAC_VREF(기본 2.5f)와 일치해야 합니다.
 #define TC_DAC_V_MAX (2.5f)
-#define TC_TEMP_SET_MIN (0.0f)
-#define TC_TEMP_SET_MAX (100.0f)
+// [이름 변경] DAC의 물리적 출력 범위를 나타내는 상수로 이름 변경
+#define TC_TEMP_DAC_RANGE_MIN (0.0f)
+#define TC_TEMP_DAC_RANGE_MAX (100.0f)
+
 
 // 선형 변환을 위한 기울기 및 오프셋 계산 (V = m*T + b)
-#define TC_T2V_SLOPE ((TC_DAC_V_MAX - TC_DAC_V_MIN) / (TC_TEMP_SET_MAX - TC_TEMP_SET_MIN))
-#define TC_T2V_OFFSET (TC_DAC_V_MIN - (TC_TEMP_SET_MIN * TC_T2V_SLOPE))
+#define TC_T2V_SLOPE ((TC_DAC_V_MAX - TC_DAC_V_MIN) / (TC_TEMP_DAC_RANGE_MAX - TC_TEMP_DAC_RANGE_MIN))
+#define TC_T2V_OFFSET (TC_DAC_V_MIN - (TC_TEMP_DAC_RANGE_MIN * TC_T2V_SLOPE))
 
 // 2. NTC 온도 센서 설정 (기존 코드의 하드코딩된 값을 Define으로 이동)
-#define NTC_V_REF (3.300)      // NTC 회로의 기준 전압 (VCC), 실제 측정한 기준 전압으로 수정 필요
-#define NTC_R_FIXED (10000.0)  // 고정 저항 값 (Ohm), 실제 측정한 고정 저항 값으로 수정 필요
-//#define NTC_B_PARAM (3988.0f)   // NTC 서미스터 사양 (예: B57703M703)
-//#define NTC_R25 (10000.0f)      // 25°C에서의 NTC 저항 값
+// [수정] HTC 컨트롤러의 정전류원(I_BIAS)을 사용하므로 V_REF와 R_FIXED는 불필요함.
+// #define NTC_V_REF (3.300)
+// #define NTC_R_FIXED (10000.0)
 
 /* ============================================================================
 * [신규 - 1, 2단계] Steinhart-Hart 계수 (Double 정밀도)
@@ -204,8 +205,6 @@ typedef struct {
 #define NTC_I_BIAS (0.0001) // 100µA
 #define KELVIN_OFFSET (273.15)
 
-#define KELVIN_OFFSET (273.15)
-//#define T0K (KELVIN_OFFSET + 25.0f)
 /* ============================================================================ */
 
 /* ============================================================================
@@ -220,7 +219,7 @@ typedef struct {
 #define RDV2_DE_GPIO_Port GPIOB
 #endif
 #ifndef RDV2_DE_Pin
-#define RDV2_DE_Pin       GPIO_PIN_1
+#define RDV2_DE_Pin       GPIO_PIN_14
 #endif
 #define RDV2_DE_TX()  HAL_GPIO_WritePin(RDV2_DE_GPIO_Port, RDV2_DE_Pin, GPIO_PIN_SET)
 #define RDV2_DE_RX()  HAL_GPIO_WritePin(RDV2_DE_GPIO_Port, RDV2_DE_Pin, GPIO_PIN_RESET)
@@ -243,20 +242,13 @@ static char     g_tx_line[RDV2_TX_BUFSZ];
 static float    g_latest_results[24];
 static uint8_t  g_send_flag = 0;
 
-// ▼▼▼▼▼ [수정] 아래 2줄 추가 ▼▼▼▼▼
 // PCB -> PC 전송 주기 (예: 250ms = 1초에 4번)
 #define SEND_INTERVAL_MS 250
 static uint32_t g_last_send_time = 0; // 마지막으로 전송한 시간 (ms)
-// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
-
-// ▼▼▼▼▼ [수정] 데이터 레이스 해결을 위해 아래 2줄 추가 ▼▼▼▼▼
 // volatile: 인터럽트와 메인 루프가 함께 사용하므로 최적화 방지
 volatile uint8_t  g_settings_flag = 0;
 static char       g_settings_buf[RDV2_RX_BUFSZ]; // 파싱 전용 안전 버퍼
-// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
-
-
 
 
 static float    g_tempC = -999.0f;     // 최신 실제 온도(°C)
@@ -280,6 +272,8 @@ static inline double polyval_f64(const double* c, int len, double x);
 
 // [신규] 온도 제어 함수 프로토타입
 static HAL_StatusTypeDef TC_Set_Target_Temperature(float temp_c);
+static float ntc_voltage_to_celsius(float v_div_f); // [추가]
+static void Update_Current_Temperature(void); // [추가]
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -314,23 +308,29 @@ static HAL_StatusTypeDef TC_Set_Target_Temperature(float temp_c)
  * [기존 수정] 온도 관련 (NTC 계산 및 ADS1115 읽기)
  * ========================================================== */
 
-/* ---- 온도(°C) 계산: NTC 분압 → °C (B-파라미터 근사) ---- */
-// 기존 함수를 수정하여 파라미터 대신 Define 상수를 사용하도록 개선
+/**
+  * @brief NTC 센서 전압을 Steinhart-Hart 공식을 이용해 온도로 변환합니다.
+  * @note  이 함수는 HTC 컨트롤러의 100uA 정전류원(I_BIAS) 사용을 가정합니다.
+  * @param v_div_f: NTC 센서 양단에서 측정된 전압 (V)
+  * @retval 계산된 온도 (°C), 오류 시 -999.0f
+  */
 static float ntc_voltage_to_celsius(float v_div_f)
 {
    // 1. 모든 계산을 double로 수행하여 정밀도 확보
      // 입력값(v_div_f)은 Update_Current_Temperature에서 이미 V 단위로 변환되어 들어옵니다.
      double v_div = (double)v_div_f;
 
-     const double v_ref = NTC_V_REF;     // 상수는 이미 double로 정의됨
-     const double r_fixed = NTC_R_FIXED; // 상수는 이미 double로 정의됨
-     // 입력값 범위 제한 (안전 코드, 정밀도 향상을 위해 1e-9 사용)
-     if (v_div <= 0.0) v_div = 1e-9;
-       if (v_div >= v_ref) v_div = v_ref - 1e-9;
+     // [수정] HTC의 정전류원(I_BIAS)을 사용하므로,
+     // V_REF와 R_FIXED 기반의 전압 분배 계산은 불필요하고 잘못되었습니다.
+     // const double v_ref = NTC_V_REF;
+     // const double r_fixed = NTC_R_FIXED;
 
-  // 2. NTC 저항 계산 (전압 분배기 공식 역산)
-  //const float r_ntc = NTC_R_FIXED * (v_div / (NTC_V_REF - v_div));
-  //const double r_ntc = r_fixed * (v_div / (v_ref - v_div));
+     // 입력값 범위 제한 (안전 코드, 0V 이하 방지)
+     if (v_div <= 0.0) v_div = 1e-9;
+     // if (v_div >= v_ref) v_div = v_ref - 1e-9; // [제거] V_REF 불필요
+
+  // 2. NTC 저항 계산 (옴의 법칙: R = V / I)
+  // [정정] 이 계산식이 HTC 컨트롤러 구성에 맞습니다.
   const double r_ntc = v_div / NTC_I_BIAS;
 
   // 3. Steinhart-Hart 공식 적용 (1단계 적용)
@@ -343,23 +343,24 @@ static float ntc_voltage_to_celsius(float v_div_f)
   if (invT <= 1e-9) return -999.0f;
 
     return (float)((1.0 / invT) - KELVIN_OFFSET);
-
 }
 
 
-/* 현재 온도 갱신(예: ADS1115 0번 채널에서 분압 읽기) */
+/**
+  * @brief ADS1115에서 새 데이터를 가져와 g_tempC를 갱신합니다.
+  * @note  ads1115_process 라이브러리에 의존합니다.
+  */
 static void Update_Current_Temperature(void)
 {
-    //float v_div = 0.0f; // NTC 전압 (채널 0)
-    float v_div_mv = 0.0f; // [수정] 밀리볼트(mV) 단위임을 명시
+    float v_div_mv = 0.0f; // 밀리볼트(mV) 단위
     HAL_StatusTypeDef status0;
 
     // 1. "ads1115_process"가 새 데이터를 준비했는지 확인합니다.
     if (ADS1115_Process_IsDataReady())
     {
         // 2. "ads1115_process"로부터 값을 가져옵니다.
-        //ADS1115_Process_GetData(&v_div, NULL, &status0, NULL);
-        ADS1115_Process_GetData(&v_div_mv, NULL, &status0, NULL); // (mV) 값 가져오기
+        //    (참고: 새 라이브러리는 Ch1(AIN1)을 읽지 않으므로 NULL 전달)
+        ADS1115_Process_GetData(&v_div_mv, NULL, &status0, NULL);
 
         if (status0 == HAL_OK)
         {
@@ -367,28 +368,16 @@ static void Update_Current_Temperature(void)
            const float v_div_v = v_div_mv / 1000.0f;
 
            // 4. NTC 변환 로직 수행 (S-H 공식 사용)
-                       float temp_calculated = ntc_voltage_to_celsius(v_div_v);
+           float temp_calculated = ntc_voltage_to_celsius(v_div_v);
 
            // 5. 최종 결과 보정 및 전역 변수 갱신
-         // 정밀도를 위해 double로 계산 후 float로 변환합니다.
            double temp_calibrated = ((double)temp_calculated * CALIB_TEMP_GAIN) + CALIB_TEMP_OFFSET;
 
            g_tempC = (float)temp_calibrated;
-
         }
-        /*
-         * if (status0 == HAL_OK)
-                {
-                    // 3. NTC 변환 로직 수행 (보정 전 온도 계산)
-                    float temp_calculated = ntc_voltage_to_celsius(v_div);
-
-                    // [수정] 4. 캘리브레이션 적용 및 전역 변수 갱신
-                    g_tempC = (temp_calculated * CALIB_TEMP_GAIN) + CALIB_TEMP_OFFSET;
-                    //g_tempC = ntc_voltage_to_celsius(v_div_v);
-                }*/
         else
         {
-            // ADC 읽기 실패 시
+            // ADC 읽기 실패 시 (-1.0f 또는 다른 실패 값)
             g_tempC = -999.0f; // 에러 값
         }
     }
@@ -663,12 +652,17 @@ static void DSP_Parse_Settings(char* line)
     if (g_params.target_temp_c >= 0.0f) {
         TC_Set_Target_Temperature(g_params.target_temp_c);
     }
+     //485 통신 테스트 ACK (응답)" 코드 활성화
+      // ▼▼▼▼▼ [수정] 아래 5줄의 주석을 해제하세요 ▼▼▼▼▼
+        const char ack[] = "ACK CFG OK\r\n";
+        RDV2_DE_TX(); // 송신 모드로 전환
+        HAL_UART_Transmit(&huart3,(uint8_t*)ack,sizeof(ack)-1,50);
+        while (__HAL_UART_GET_FLAG(&huart3, UART_FLAG_TC)==RESET) {} // 전송 완료 대기
+        RDV2_DE_RX(); // 즉시 수신 모드로 복귀
+        // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
-    // (선택) 적용 성공 ACK
-    // const char ack[] = "ACK CFG OK\r\n";
-    // RDV2_DE_TX(); HAL_UART_Transmit(&huart3,(uint8_t*)ack,sizeof(ack)-1,50);
-    // while (__HAL_UART_GET_FLAG(&huart3, UART_FLAG_TC)==RESET) {}
-    // RDV2_DE_RX();
+
+
 }
 
 
@@ -766,6 +760,7 @@ static void DSP_Send_Data_Frame(void)
   if (n < 0 || n >= RDV2_TX_BUFSZ) return;
 
   // ---- 신규 필드: 실제 온도(°C) 추가 ----
+  // [수정] 새 라이브러리는 목표 온도 모니터링을 지원하지 않으므로 g_tempC만 전송
   n += snprintf(g_tx_line + n, RDV2_TX_BUFSZ - n, "%.3f|end\r\n", g_tempC);
 
 
@@ -781,7 +776,6 @@ static void DSP_Send_Data_Frame(void)
 
   // 3.2. UART3를 통해 g_tx_line 버퍼의 내용을 n 바이트만큼 전송 (타임아웃 100ms)
   // huart3: CubeMX에서 설정한 UART 핸들러 (실제 프로젝트에 맞게 확인 필요)
-//  HAL_UART_Transmit(&huart3, (uint8_t*)g_tx_line, (uint16_t)n, 100);
   HAL_StatusTypeDef tx_status = HAL_UART_Transmit(&huart3, (uint8_t*)g_tx_line, (uint16_t)n, 100);
 
     // [중요 수정] 전송이 물리적으로 완료될 때까지 대기 (TC 플래그 확인)
@@ -798,7 +792,7 @@ static void DSP_Send_Data_Frame(void)
     }
     /* ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ */
 
-    
+
   // 3.3. RS485 수신 모드 복귀 (DE 핀 LOW)
   RDV2_DE_RX();
 }
@@ -885,13 +879,16 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-  /* ▼▼▼ [해결 방안] 전원 및 외부 IC 안정화를 위한 초기 지연 추가 ▼▼▼ */
-    HAL_Delay(200); // 200ms 대기 (문제가 지속되면 500ms까지 늘려볼 수 있습니다)
+  /* ▼▼▼ [필수] 전원 및 외부 IC 안정화를 위한 초기 지연 (제거 금지) ▼▼▼ */
+    // 이 Delay는 while(1) 루프 밖에서 초기화 시 1회만 실행됩니다.
+    // 전원 인가 시 HTC 컨트롤러, ADS1115가 안정화될 시간을 확보하여
+    // "부팅 시 초기 온도가 튀는 현상"을 해결하는 필수 코드입니다.
+    HAL_Delay(500);
     /* ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ */
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
-  MX_GPIO_Init();spq
+  MX_GPIO_Init();
   MX_SPI1_Init();
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
@@ -904,25 +901,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
 
-
-  /* ==== [신규] 온도 제어 하드웨어 초기화 ==== */
-    // 1. DAC 초기화 (SPI2, bsp_dac.c)
-    if (BSP_DAC_Init() != HAL_OK) {
-        // DAC 초기화 실패 처리
-        // Error_Handler();
-    }
-
-    // 2. ADS1115 초기화 및 타이머 시작 (I2C1, TIM7, ads1115_process.c)
-    // 2Hz로 ADS1115를 읽기 위한 타이머를 시작합니다.
-    ADS1115_Process_Init();
-    ADC_Process_Init(); // AD7606 시작
-
-
-    // 3. 초기 안전 온도 설정 (최소값으로 시작)
-    TC_Set_Target_Temperature(TC_TEMP_SAFE_START);
-
-
-  /* ==== SW_1 DSP: 초기화 ==== */
+  /* ==== SW_1 DSP: 파라미터 기본값 초기화 ==== */
   memset(&g_params, 0, sizeof(dsp_params_t));
   // [단위] 내부 Hz 기준으로 초기화
   g_params.sampling_rate    = 50000.0f; // Hz
@@ -939,34 +918,108 @@ int main(void)
 
 
   /* --- y-chain 기본값을 항등식 계수로 수정 --- */
-
-    // coeffs_y1 (y1_den): 분모를 상수 1로 설정
-    g_params.y1_den[0] = 0.0; g_params.y1_den[1] = 0.0; g_params.y1_den[2] = 0.0;
-    g_params.y1_den[3] = 0.0; g_params.y1_den[4] = 0.0; g_params.y1_den[5] = 1.0;
-    g_params.y1_den_len = 6;
-
-    // coeffs_y2 (y2_coeffs): y2 = y1 이 되도록 설정
-    g_params.y2_coeffs[0] = 0.0; g_params.y2_coeffs[1] = 0.0; g_params.y2_coeffs[2] = 0.0;
-    g_params.y2_coeffs[3] = 0.0; g_params.y2_coeffs[4] = 1.0; g_params.y2_coeffs[5] = 0.0;
-    g_params.y2_coeffs_len = 6;
-
-    // coeffs_y3 (y3_coeffs): y3 = y2 가 되도록 설정
-    g_params.y3_coeffs[0] = 0.0; g_params.y3_coeffs[1] = 0.0; g_params.y3_coeffs[2] = 0.0;
-    g_params.y3_coeffs[3] = 0.0; g_params.y3_coeffs[4] = 1.0; g_params.y3_coeffs[5] = 0.0;
-    g_params.y3_coeffs_len = 6;
-
-    // coeffs_yt (E, F): yt = y3 가 되도록 설정 (기존과 동일)
-    g_params.E = 1.0; g_params.F = 0.0;
+  // coeffs_y1 (y1_den): 분모를 상수 1로 설정
+  g_params.y1_den[0] = 0.0; g_params.y1_den[1] = 0.0; g_params.y1_den[2] = 0.0;
+  g_params.y1_den[3] = 0.0; g_params.y1_den[4] = 0.0; g_params.y1_den[5] = 1.0;
+  g_params.y1_den_len = 6;
+  // coeffs_y2 (y2_coeffs): y2 = y1 이 되도록 설정
+  g_params.y2_coeffs[0] = 0.0; g_params.y2_coeffs[1] = 0.0; g_params.y2_coeffs[2] = 0.0;
+  g_params.y2_coeffs[3] = 0.0; g_params.y2_coeffs[4] = 1.0; g_params.y2_coeffs[5] = 0.0;
+  g_params.y2_coeffs_len = 6;
+  // coeffs_y3 (y3_coeffs): y3 = y2 가 되도록 설정
+  g_params.y3_coeffs[0] = 0.0; g_params.y3_coeffs[1] = 0.0; g_params.y3_coeffs[2] = 0.0;
+  g_params.y3_coeffs[3] = 0.0; g_params.y3_coeffs[4] = 1.0; g_params.y3_coeffs[5] = 0.0;
+  g_params.y3_coeffs_len = 6;
+  // coeffs_yt (E, F): yt = y3 가 되도록 설정 (기존과 동일)
+  g_params.E = 1.0; g_params.F = 0.0;
 
 
+
+  /* ==== [신규] 온도 제어 하드웨어 초기화 ==== */
+  // 1. DAC 초기화 (SPI2, bsp_dac.c)
+  if (BSP_DAC_Init() != HAL_OK) {
+      // DAC 초기화 실패 처리
+      // Error_Handler();
+  }
+
+  // 2. [핵심 수정] ADS1115 초기화 (I2C Bus Lock-up 방지 재시도 로직)
+  HAL_StatusTypeDef ads_init_status;
+  int retries = 3; // 최대 3번 시도
+  while (retries > 0)
+  {
+      ads_init_status = ADS1115_Process_Init(); // TIM7 타이머 시작 포함
+      if (ads_init_status == HAL_OK)
+      {
+          break; // I2C 통신 및 초기화 성공
+      }
+
+      // I2C 칩이 응답하지 않음 (Bus Lock-up 또는 부팅 중)
+      retries--;
+      if (retries == 0)
+      {
+           // 3번 시도 후에도 실패. 일단 진행 (온도는 -999로 표시됨)
+           break;
+      }
+
+      // I2C 페리페럴을 강제로 리셋하고 칩이 부팅되길 기다림
+      HAL_I2C_DeInit(&hi2c1);
+      HAL_Delay(100); // 100ms 대기 (초기화 단계이므로 HAL_Delay 허용)
+      MX_I2C1_Init(); // I2C 재초기화
+      HAL_Delay(100); // 100ms 추가 대기 (초기화 단계이므로 HAL_Delay 허용)
+  }
+
+  ADC_Process_Init(); // AD7606 시작
+
+
+  // 3. [핵심 수정] 첫 번째 안정적인 온도 값 확보 (Idle Start)
+  // HTC "Warm-up" 시간을 기다려 -4.39도 문제를 해결합니다.
+  uint32_t init_start = HAL_GetTick();
+
+  if (ads_init_status == HAL_OK) // [추가] I2C가 성공했을 때만 온도 읽기 시도
+  {
+      // [수정] 안정화될 때까지(3초) 또는 정상 범위에 들어올 때까지 대기
+      while (HAL_GetTick() - init_start < 3000) // 최대 3초 타임아웃
+      {
+          // 다음 2Hz (0.5초) 샘플 대기
+          while (!ADS1115_Process_IsDataReady() && (HAL_GetTick() - init_start < 3000))
+          {
+              HAL_Delay(10); // (초기화 단계이므로 HAL_Delay 허용)
+          }
+          if (HAL_GetTick() - init_start >= 3000) break; // 타임아웃
+
+          Update_Current_Temperature(); // 새 온도 값(g_tempC) 갱신
+
+          // [핵심] 읽어온 값이 정상 범위(10~50도)인지 확인
+          if (g_tempC >= TC_TEMP_SET_MIN && g_tempC <= TC_TEMP_SET_MAX)
+          {
+              break; // 정상 값이므로 대기 종료
+          }
+          // (g_tempC가 -4.39이거나 -999이면 루프 계속)
+      }
+  }
+  // else: ads_init_status가 HAL_ERROR이면 g_tempC는 -999.0f (기본값)
+
+  // 4. '안전한 시작' 대신 '현재 온도로 시작' (Idle Start)
+  if (g_tempC > -900.0f) { // g_tempC가 -999 (에러)가 아니라면 (예: 25.0)
+      // (성공) 목표 온도를 현재 온도로 설정하여 TEC가 0A로 시작 (Idle)
+      TC_Set_Target_Temperature(g_tempC);
+      g_params.target_temp_c = g_tempC; // PC가 설정하기 전까지 현재 온도를 목표로 함
+  } else {
+      // (실패) ADS1115 읽기 실패 또는 3초 타임아웃. 안전하게 20도로 설정
+      TC_Set_Target_Temperature(TC_TEMP_SAFE_START); // 20.0도
+      g_params.target_temp_c = TC_TEMP_SAFE_START;
+  }
+  // ▲▲▲▲▲ [수정 완료] ▲▲▲▲▲
+
+
+  /* ==== DSP 상태 및 전송 타이머 초기화 ==== */
   DSP_Reset_State();
   memset(g_latest_results, 0, sizeof(g_latest_results));
+  g_last_send_time = HAL_GetTick(); // "벽시계" 타이머 초기화
 
 
-
-  HAL_UART_Receive_IT(&huart3, &g_rx_byte, 1); // UART 수신 시작
-
-
+  /* ==== UART 수신 시작 ==== */
+  HAL_UART_Receive_IT(&huart3, &g_rx_byte, 1);
 
   /* USER CODE END 2 */
 
@@ -975,38 +1028,39 @@ int main(void)
   while (1) {
 
     /* USER CODE END WHILE */
-     RDV2_DE_RX();       // RS485 수신 모드  // While 문안에 <-- 이걸 넣었음!!!!!!-10. 29.
-
+     //RDV2_DE_RX();       // [제거] 불필요한 호출
     /* USER CODE BEGIN 3 */
 
 
-     // ▼▼▼▼▼ [수정] 깃발(Flag) 확인 로직 추가 ▼▼▼▼▼
+     // ▼▼▼ 1. 설정값 처리 (비차단) ▼▼▼
      if (g_settings_flag) {
 
-         g_settings_flag = 0; // 1. 깃발을 먼저 내립니다.
+         g_settings_flag = 0; // 깃발 내리기
 
-         // 2. 파싱 및 적용을 "메인 루프"에서 안전하게 실행
+         // 파싱 및 적용 (이 함수 내부에 블로킹 HAL_Delay가 없어야 함)
          DSP_Parse_Settings(g_settings_buf);
      }
-     // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+     // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
-     DSP_Process_Sample(); // ADC 샘플 처리
+     // ▼▼▼ 2. ADC 샘플 처리 (비차단) ▼▼▼
+     DSP_Process_Sample(); // (내부에서 g_send_flag = 1 설정)
 
-         if (g_send_flag) {   // 1. DSP 처리가 끝나서 새 데이터가 준비되면
-           g_send_flag = 0;   // 2. 플래그는 즉시 내립니다. (데이터 준비 확인함)
+     // ▼▼▼ 3. 데이터 전송 (비차단, "벽시계" 방식) ▼▼▼
+     if (g_send_flag) {   // 1. DSP 처리가 끝나서 새 데이터가 준비되면
+       g_send_flag = 0;   // 2. 플래그는 즉시 내립니다. (데이터 준비 확인함)
 
-           // 3. "벽시계"를 확인해서 전송할 시간이 되었는지 체크합니다.
-           uint32_t now = HAL_GetTick(); // 현재 시간 (ms)
-           if (now - g_last_send_time >= SEND_INTERVAL_MS)
-           {
-               // 4. 시간이 되었다면, 마지막 전송 시간을 갱신하고
-               g_last_send_time = now;
+       // 3. "벽시계"를 확인해서 전송할 시간이 되었는지 체크합니다.
+       uint32_t now = HAL_GetTick(); // 현재 시간 (ms)
+       if (now - g_last_send_time >= SEND_INTERVAL_MS)
+       {
+           // 4. 시간이 되었다면, 마지막 전송 시간을 갱신하고
+           g_last_send_time = now;
 
-               // 5. 실제 전송을 수행합니다.
-               Update_Current_Temperature();
-               DSP_Send_Data_Frame();
-           }
-           // (만약 100ms가 안 지났다면, 전송을 "건너뛰고" 루프가 계속 돕니다.)
+           // 5. 실제 전송을 수행합니다.
+           Update_Current_Temperature(); // 전송 직전에만 온도 갱신
+           DSP_Send_Data_Frame(); // (이 함수 내부에 블로킹 HAL_Delay가 없어야 함)
+       }
+       // (만약 250ms가 안 지났다면, 전송을 "건너뛰고" 루프가 계속 돕니다.)
      }
   }
   /* USER CODE END 3 */
@@ -1087,10 +1141,10 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
      * 통신 라인이 끊기지 않고 다음 데이터를 계속 수신할 수 있습니다.
      */
     __HAL_UART_CLEAR_FLAG(huart, UART_FLAG_FE | UART_FLAG_PE | UART_FLAG_NE | UART_FLAG_ORE);
-    
+
     // (선택사항) 에러 코드 확인
     // uint32_t error_code = huart->ErrorCode;
-    
+
     // HAL_UART_AbortReceive(huart); // 때로 Abort가 필요할 수 있음
 
     // 가장 중요한 부분: 수신 인터럽트 재시작
@@ -1146,7 +1200,7 @@ void Error_Handler(void)
 #ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
+  * where the assert_param error has occurred.
   * @param  file: pointer to the source file name
   * @param  line: assert_param error line source number
   * @retval None

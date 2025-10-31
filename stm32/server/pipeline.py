@@ -178,8 +178,8 @@ class SerialSource(SourceBase):
         self.last_tempC = -999.0
 
 
-         # ---------- TX(송신) 포트 오픈(옵션) ----------
-        # • PC→PCB 설정 프레임 전송은 app.py의 _send_cfg_if_serial()에서 self.tx 사용
+        # ---------- TX(송신) 포트 ----------
+        # • 별도 TX 포트가 있으면 열고, 없으면 RS-485 half-duplex로 RX 핸들을 재사용
         self.tx = None
         if sp.tx_port and str(sp.tx_port).strip().lower() not in ("none", "", "null"):
             try:
@@ -187,7 +187,11 @@ class SerialSource(SourceBase):
             except Exception as e:
                 print(f"[SerialSource] TX open failed ({sp.tx_port}): {e}", file=sys.stderr)
                 self.tx = None
-
+        if self.tx is None and self.rx is not None:
+            self.tx = self.rx  # <-- half-duplex fallback (RS-485: TX=RX)
+            print("[SerialSource] TX fallback to RX (half-duplex)")
+            
+            
     def terminate(self):
         """파이프라인 종료 시 포트 정리(에러는 조용히 무시)."""
         try: self.rx.close()
