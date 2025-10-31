@@ -597,96 +597,78 @@ static void DSP_Process_Sample(void)
  * ========================================================== */
 static void DSP_Parse_Settings(char* line)
 {
-  if (strncmp(line, "st|", 3) != 0 || !strstr(line, "|end")) return;
+    // 1) 수신 라인 내부에서 st| … |end 구간만 안전하게 잘라내기
+    char *s = strstr(line, "st|");
+    if (!s) return;
+    char *e = strstr(s, "|end");
+    if (!e) return;
+    e += 4; // "|end" 끝까지 포함
+    size_t len = (size_t)(e - s);
+    if (len >= RDV2_RX_BUFSZ) return;
 
-  char* tok[32]; int ntok = 0;
-  char *p = strtok(line, "|");
-  while (p && ntok < 32) { tok[ntok++] = p; p = strtok(NULL, "|"); }
+    char buf[RDV2_RX_BUFSZ];
+    memcpy(buf, s, len);
+    buf[len] = '\0';
 
-  // 허용 토큰 수:
-  //  - 레거시(스칼라7 + 배열4) = 13
-  //  - 신규(스칼라8 + 배열4)   = 14
-  if ((ntok != 13 && ntok != 14) || strcmp(tok[0], "st") != 0 || strcmp(tok[ntok - 1], "end") != 0) {
-    return;
-  }
+    // 2) 기존 토큰화/검증 로직을 buf 기준으로 그대로 진행
+    char* tok[32]; int ntok = 0;
+    char *p = strtok(buf, "|");
+    while (p && ntok < 32) { tok[ntok++] = p; p = strtok(NULL, "|"); }
 
-  // 임시 파라미터 구조체 (검증 성공 시 g_params로 복사)
-  dsp_params_t np = g_params;
+    // 허용 토큰 수: 레거시 13(스칼라7+배열4), 신규 14(스칼라8+배열4)
+    if ((ntok != 13 && ntok != 14) || strcmp(tok[0], "st") != 0 || strcmp(tok[ntok-1], "end") != 0) {
+        return;
+    }
 
-  /* 스칼라 7개 파싱 */
-  np.lpf_cutoff_hz    = (float)strtof(tok[1],  NULL);
-  // [단위] kS/s 수신 -> Hz로 변환 저장
-  np.sampling_rate    = (float)strtof(tok[2],  NULL) * 1000.0f;
-  // [단위] Hz 수신 -> Hz로 저장
-  np.target_rate      = (float)strtof(tok[3],  NULL);
-  np.movavg_r         = (int)strtol(tok[4], NULL, 10);
-  np.movavg_ch        = (int)strtol(tok[5], NULL, 10);
-  // [수정] base 0 사용: 10진수/16진수 자동 감지
-  np.channel_mask     = (int)strtol(tok[6], NULL, 0);
-  np.block_size       = (int)strtol(tok[7], NULL, 10);
+    // ===== 아래는 기존 코드 그대로 =====
+    dsp_params_t np = g_params;
+    np.lpf_cutoff_hz    = (float)strtof(tok[1],  NULL);
+    np.sampling_rate    = (float)strtof(tok[2],  NULL) * 1000.0f;  // kS/s -> Hz
+    np.target_rate      = (float)strtof(tok[3],  NULL);
+    np.movavg_r         = (int)strtol(tok[4], NULL, 10);
+    np.movavg_ch        = (int)strtol(tok[5], NULL, 10);
+    np.channel_mask     = (int)strtol(tok[6], NULL, 0);             // 10/16진 자동
+    np.block_size       = (int)strtol(tok[7], NULL, 10);
 
- int arr_base = 8; // 배열 시작 인덱스 (레거시 기준)
- /* 스칼라 #8: target_temp_c (신규) */
- if (ntok == 14) {               // 신규 프레임이면
-    np.target_temp_c = (float)strtof(tok[8], NULL);
-    arr_base = 9;                 // 배열 시작 위치 1칸 뒤로
-  }
- // 레거시(13토큰)의 경우 np.target_temp_c는 기존값 유지
+    int arr_base = 8;
+    if (ntok == 14) { np.target_temp_c = (float)strtof(tok[8], NULL); arr_base = 9; }
 
+    double yt_tmp[2]; int y1d_n, y2c_n, y3c_n, yt_n;
+    parse_csv_vec(tok[arr_base+0],  np.y1_den,    6, &y1d_n);
+    parse_csv_vec(tok[arr_base+1],  np.y2_coeffs, 6, &y2c_n);
+    parse_csv_vec(tok[arr_base+2],  np.y3_coeffs, 6, &y3c_n);
+    parse_csv_vec(tok[arr_base+3],  yt_tmp,       2, &yt_n);
+    if (y1d_n!=6 || y2c_n!=6 || y3c_n!=6 || yt_n!=2) return;
 
+    np.y1_den_len = y1d_n; np.y2_coeffs_len = y2c_n; np.y3_coeffs_len = y3c_n;
+    np.E = yt_tmp[0]; np.F = yt_tmp[1];
 
-  /* 계수(배열) 4묶음 파싱 및 길이 검증 */
-  double yt_tmp[2]; int y1d_n, y2c_n, y3c_n, yt_n;
-  parse_csv_vec(tok[arr_base+0],  np.y1_den,      6, &y1d_n);
-  parse_csv_vec(tok[arr_base+1],  np.y2_coeffs,   6, &y2c_n);
-  parse_csv_vec(tok[arr_base+2],  np.y3_coeffs,   6, &y3c_n);
-  parse_csv_vec(tok[arr_base+3],  yt_tmp,         2, &yt_n);
+    if (np.sampling_rate < 1.0f) np.sampling_rate = 1.0f;
+    if (np.target_rate   < 0.1f) np.target_rate   = 0.1f;
+    np.decim_rate = (int)(np.sampling_rate / np.target_rate + 0.5f);
+    if (np.decim_rate < 1) np.decim_rate = 1;
+    if (np.movavg_r  < 1)  np.movavg_r  = 1;
+    if (np.movavg_ch < 1)  np.movavg_ch = 1;
+    if (np.movavg_r  > MAX_MA_WIN) np.movavg_r  = MAX_MA_WIN;
+    if (np.movavg_ch > MAX_MA_WIN) np.movavg_ch = MAX_MA_WIN;
+    if (np.channel_mask < 0 || np.channel_mask > 0xFF) np.channel_mask = 0xFF;
+    if (np.block_size < 1) np.block_size = 1;
 
+    np.alpha=1.0; np.beta=1.0; np.gamma=1.0; np.k=10.0; np.b=0.0; np.r_abs=1;
+    np.y1_num[0]=1.0; np.y1_num[1]=0.0; np.y1_num_len=2;
 
-  // [검증] 각 배열의 길이가 정확히 맞는지 확인
-  if (y1d_n != 6 || y2c_n != 6 || y3c_n != 6 || yt_n != 2) {
-      // (선택) 오류 알림: HAL_UART_Transmit(&huart3, (uint8_t*)"NACK CFG LEN\r\n", 14, 100);
-      return; // 길이 불일치 시 프레임 무시
-  }
-  // 길이가 맞으면 실제 적용
-  np.y1_den_len = y1d_n;
-  np.y2_coeffs_len = y2c_n;
-  np.y3_coeffs_len = y3c_n;
-  np.E = yt_tmp[0]; np.F = yt_tmp[1];
+    g_params = np;
+    DSP_Reset_State();
 
-  /* 파라미터 보정 및 파생값 계산 */
-  if (np.sampling_rate < 1.0f) np.sampling_rate = 1.0f; // Hz 기준
-  if (np.target_rate < 0.1f) np.target_rate = 0.1f;     // Hz 기준
-  np.decim_rate = (int)(np.sampling_rate / np.target_rate + 0.5f); // Hz/Hz
-  if (np.decim_rate < 1) np.decim_rate = 1;
-  if (np.movavg_r < 1) np.movavg_r = 1;
-  if (np.movavg_ch < 1) np.movavg_ch = 1;
-  if (np.movavg_r > MAX_MA_WIN) np.movavg_r = MAX_MA_WIN;
-  if (np.movavg_ch > MAX_MA_WIN) np.movavg_ch = MAX_MA_WIN;
-  // channel_mask 범위 검증 (0 ~ 255)
-  if (np.channel_mask < 0 || np.channel_mask > 0xFF) np.channel_mask = 0xFF; // 잘못된 값은 기본값(전체)으로
-  // block_size 검증
-  if (np.block_size < 1) np.block_size = 1; // 최소 1
-
-  /* R 파라미터 (고정값) */
-  np.alpha=1.0; np.beta=1.0; np.gamma=1.0; np.k=10.0; np.b=0.0; np.r_abs=1;
-  np.y1_num[0]=1.0; np.y1_num[1]=0.0; np.y1_num_len=2;
-
-  /* 모든 검증 통과 시 실제 적용 */
-  g_params = np;
-  DSP_Reset_State(); // 상태 리셋
-  // (선택) 성공 알림: HAL_UART_Transmit(&huart3, (uint8_t*)"ACK CFG OK\r\n", 12, 100);
-
-
-  // ▼▼▼ [이곳에 온도 관련 목표값 설정 후 실제 작동하는 로직을 위해서 필요] ▼▼▼
-  // PC에서 받은 목표 온도를 실제 온도 컨트롤러(DAC)에 적용합니다.
-    // g_params.target_temp_c가 유효한 값(0도 이상)일 경우에만 설정합니다. (기본값 -1.0f)
     if (g_params.target_temp_c >= 0.0f) {
         TC_Set_Target_Temperature(g_params.target_temp_c);
     }
-  // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
-
+    // (선택) 적용 성공 ACK
+    // const char ack[] = "ACK CFG OK\r\n";
+    // RDV2_DE_TX(); HAL_UART_Transmit(&huart3,(uint8_t*)ack,sizeof(ack)-1,50);
+    // while (__HAL_UART_GET_FLAG(&huart3, UART_FLAG_TC)==RESET) {}
+    // RDV2_DE_RX();
 }
 
 
@@ -816,7 +798,7 @@ static void DSP_Send_Data_Frame(void)
     }
     /* ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ */
 
-    HAL_Delay(1);
+    
   // 3.3. RS485 수신 모드 복귀 (DE 핀 LOW)
   RDV2_DE_RX();
 }
@@ -1089,6 +1071,32 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+/**
+  * @brief  UART 에러 콜백.
+  * @note   노이즈, 프레임 에러, 오버런 등으로 수신(RX) IT가 중단되는 것을 방지.
+  */
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+  if (huart->Instance == USART3)
+  {
+    /*
+     * 에러 발생 시, UART 상태를 풀고(Unlock)
+     * 즉시 다음 1바이트 수신을 위해 IT를 재시작합니다.
+     * 이렇게 하면 노이즈로 인해 깨진 바이트는 버려지지만,
+     * 통신 라인이 끊기지 않고 다음 데이터를 계속 수신할 수 있습니다.
+     */
+    __HAL_UART_CLEAR_FLAG(huart, UART_FLAG_FE | UART_FLAG_PE | UART_FLAG_NE | UART_FLAG_ORE);
+    
+    // (선택사항) 에러 코드 확인
+    // uint32_t error_code = huart->ErrorCode;
+    
+    // HAL_UART_AbortReceive(huart); // 때로 Abort가 필요할 수 있음
+
+    // 가장 중요한 부분: 수신 인터럽트 재시작
+    HAL_UART_Receive_IT(&huart3, &g_rx_byte, 1);
+  }
+}
 
 /* USER CODE END 4 */
 
