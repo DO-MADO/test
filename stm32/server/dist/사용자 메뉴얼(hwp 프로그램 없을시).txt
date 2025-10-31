@@ -72,11 +72,11 @@ RS485 모드 실행 전, 프로그램에 설정된 COM 포트 번호와 PC에 �
 
 3. 파일 내용 중 아래 START로 시작하는 줄을 찾습니다.
 
-4. START "DSP Server" DSP_SERVER.EXE --mode serial ... --rx_port COM17 ... --tx_port COM13 ...
+4. START "DSP Server" DSP_SERVER.EXE --mode serial --host 127.0.0.1 --port 8000 --rx_port COM20 —rx_baud 115200 ...
 
-5. --rx_port COM17부분과 --tx_port COM13부분을 1번에서 확인한 실제 COM 포트 번호로 수정합니다. 
-• (예시)만약 RX가 COM5이고 TX가 COM6이라면, 아래와 같이 수정합니다.
-START "DSP Server" DSP_SERVER.EXE --mode serial ... --rx_port COM5 ... --tx_port COM6 ...
+5. --rx_port COM20부분을 1번에서 확인한 실제 COM 포트 번호로 수정합니다. 
+• (예시)만약 RS485가 COM5이라면, 아래와 같이 수정합니다.
+START "DSP Server" DSP_SERVER.EXE --mode serial --host 127.0.0.1 --port 8000 --rx_port COM5 —rx_baud 115200 ...
 
 파일을 [저장]하고 닫은 뒤, .bat파일을 실행합니다.
 

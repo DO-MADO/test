@@ -251,6 +251,23 @@ volatile uint8_t  g_settings_flag = 0;
 static char       g_settings_buf[RDV2_RX_BUFSZ]; // 파싱 전용 안전 버퍼
 
 
+///  PC -> PCB 디버그 전욕 카운터 변수 ///////////////////////////
+volatile uint32_t dbg_rx_bytes=0, dbg_rx_lines=0, dbg_flag_set=0, dbg_flag_apply=0, dbg_parse_ok=0, dbg_parse_fail=0;
+volatile uint16_t dbg_last_fail_code=0; // 1:marker,2:fields,3:payload,4:range,5:overflow,6:timeout...
+static char      dbg_last_reason[64];
+///////////////////////////////////////////////////////////////
+
+
+/* === 여기! 전역 디버그 변수들 바로 아래에 넣으세요 === */
+#define DBG_FAIL(code, reason_literal) do { \
+    dbg_parse_fail++; \
+    dbg_last_fail_code = (code); \
+    strncpy(dbg_last_reason, (reason_literal), sizeof(dbg_last_reason)-1); \
+    dbg_last_reason[sizeof(dbg_last_reason)-1] = '\0'; \
+} while(0)
+/* ================================================ */
+
+
 static float    g_tempC = -999.0f;     // 최신 실제 온도(°C)
 static const int sensor_idx[4]   = {0, 2, 4, 6};
 static const int standard_idx[4] = {1, 3, 5, 7};
@@ -588,12 +605,13 @@ static void DSP_Parse_Settings(char* line)
 {
     // 1) 수신 라인 내부에서 st| … |end 구간만 안전하게 잘라내기
     char *s = strstr(line, "st|");
-    if (!s) return;
+    if (!s) { DBG_FAIL(1, "no_st_marker"); return; }
+
     char *e = strstr(s, "|end");
-    if (!e) return;
-    e += 4; // "|end" 끝까지 포함
+    if (!e) { DBG_FAIL(1, "no_end_marker"); return; }
+    e += 4;
     size_t len = (size_t)(e - s);
-    if (len >= RDV2_RX_BUFSZ) return;
+    if (len >= RDV2_RX_BUFSZ) { DBG_FAIL(5, "rx_overflow"); return; }
 
     char buf[RDV2_RX_BUFSZ];
     memcpy(buf, s, len);
@@ -606,6 +624,7 @@ static void DSP_Parse_Settings(char* line)
 
     // 허용 토큰 수: 레거시 13(스칼라7+배열4), 신규 14(스칼라8+배열4)
     if ((ntok != 13 && ntok != 14) || strcmp(tok[0], "st") != 0 || strcmp(tok[ntok-1], "end") != 0) {
+        DBG_FAIL(2, "fields!=13/14_or_bad_markers");
         return;
     }
 
@@ -627,7 +646,9 @@ static void DSP_Parse_Settings(char* line)
     parse_csv_vec(tok[arr_base+1],  np.y2_coeffs, 6, &y2c_n);
     parse_csv_vec(tok[arr_base+2],  np.y3_coeffs, 6, &y3c_n);
     parse_csv_vec(tok[arr_base+3],  yt_tmp,       2, &yt_n);
-    if (y1d_n!=6 || y2c_n!=6 || y3c_n!=6 || yt_n!=2) return;
+    if (y1d_n!=6 || y2c_n!=6 || y3c_n!=6 || yt_n!=2) {
+      DBG_FAIL(3, "array_len_mismatch");
+      return;}
 
     np.y1_den_len = y1d_n; np.y2_coeffs_len = y2c_n; np.y3_coeffs_len = y3c_n;
     np.E = yt_tmp[0]; np.F = yt_tmp[1];
@@ -648,6 +669,8 @@ static void DSP_Parse_Settings(char* line)
 
     g_params = np;
     DSP_Reset_State();
+
+    dbg_parse_ok++;               // [디버그] 파서 성공 카운트 갱신
 
     if (g_params.target_temp_c >= 0.0f) {
         TC_Set_Target_Temperature(g_params.target_temp_c);
@@ -803,6 +826,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   if (huart->Instance == USART3) {
     uint8_t c = g_rx_byte;
 
+    dbg_rx_bytes++;              // [디버그] 바이트 1개 수신 카운트
+
     // 1) 라인 버퍼에 누적
     if (g_rx_len < (RDV2_RX_BUFSZ - 1)) {
       g_rx_line[g_rx_len++] = (char)c;
@@ -815,6 +840,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 
     // 2) 종료 조건: 개행 또는 "|end" 등장
     if (c == '\n' || (g_rx_len >= 4 && strstr(g_rx_line, "|end") != NULL)) {
+
+      dbg_rx_lines++;            // [디버그] 1줄 완성 카운트
 
       // 안전하게 로컬 복사 후 CR/LF 제거
       char line_buf[RDV2_RX_BUFSZ];
@@ -838,6 +865,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
           strncpy(g_settings_buf, line_buf, RDV2_RX_BUFSZ - 1);
           g_settings_buf[RDV2_RX_BUFSZ - 1] = '\0'; // 안전하게 널 종료
           g_settings_flag = 1; // 깃발 올리기!
+
+          dbg_flag_set++;         // [디버그] 깃발 세운 횟수
       }
       // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
@@ -1034,6 +1063,8 @@ int main(void)
 
      // ▼▼▼ 1. 설정값 처리 (비차단) ▼▼▼
      if (g_settings_flag) {
+
+         dbg_flag_apply++;         // [디버그] 깃발 적용 진입 횟수
 
          g_settings_flag = 0; // 깃발 내리기
 
